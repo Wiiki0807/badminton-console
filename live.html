@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#071f3d">
+  <title>first🥇羽球即時看板</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700;800;900&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="live.css">
+  <link rel="stylesheet" href="live-extra.css">
+</head>
+<body>
+  <header class="live-header">
+    <div class="brand-ball">羽</div>
+    <div><small>8/5 WED · 板橋奧創</small><h1>first🥇羽球即時看板</h1></div>
+    <span class="connection"><i></i><b id="connection-text">連線中</b></span>
+  </header>
+  <main>
+    <section class="hero">
+      <div><span id="session-label">B 時段</span><h2>現在輪到誰？</h2><p id="updated-at">等待管理端發布排點</p></div>
+      <div class="hero-number"><strong id="live-court-count">0</strong><small>場進行中</small></div>
+    </section>
+
+    <nav class="live-menu" aria-label="球友看板分類">
+      <button class="active" data-live-menu="courts" aria-pressed="true"><span>🏸</span>即時球場</button>
+      <button data-live-menu="results" aria-pressed="false"><span>🏆</span>比分評語</button>
+      <button data-live-menu="stats" aria-pressed="false"><span>📊</span>趣味指標</button>
+      <button data-live-menu="wishes" aria-pressed="false"><span>✨</span>許願池</button>
+      <button data-live-menu="chat" aria-pressed="false"><span>💬</span>留言互動</button>
+    </nav>
+
+    <section class="live-panel active" data-live-panel="courts"><div class="section-title"><div><small>LIVE COURTS</small><h2>場上對戰</h2></div><span>每 2 秒更新</span></div><div id="live-courts" class="live-courts"></div></section>
+
+    <section class="live-panel" data-live-panel="results"><div class="section-title"><div><small>LATEST RESULTS</small><h2>最新比分與評語</h2></div><button id="toggle-results" class="section-toggle" type="button" hidden>展開全部</button></div><div id="recent-results" class="results"></div></section>
+
+    <section class="live-panel" data-live-panel="stats"><div class="section-title"><div><small>FUN STATS</small><h2>今晚趣味指標</h2></div><button id="toggle-stats" class="section-toggle" type="button" hidden>展開全部</button></div><div id="fun-stats" class="stats"></div></section>
+
+    <section class="live-panel public-wish-section" data-live-panel="wishes"><div class="section-title"><div><small>WISH POOL</small><h2>球友許願池</h2></div><span>用比賽表現累積點數</span></div><div class="wish-points-guide"><span>勝場＋1</span><span>3 連勝＋2</span><span>越級成功＋2</span><span>Elo +25 換 1 點</span></div><form id="wish-form" class="wish-form"><select id="wish-player" required><option value="">我是誰？</option></select><select id="wish-type" required><option value="partner">指定搭檔 · 3 點</option><option value="opponent">指定對手 · 4 點</option><option value="mixed">想打混雙 · 3 點</option><option value="boss">挑戰魔王 · 5 點</option></select><input id="wish-target" maxlength="30" placeholder="對象或補充說明"><button>送出願望</button></form><div id="public-wishes" class="public-wishes"></div></section>
+
+    <section class="live-panel cheer-section" data-live-panel="chat">
+      <div class="section-title"><div><small>COURTSIDE CHAT</small><h2>場邊留言</h2></div><span>一起加油 🏸</span></div>
+      <div id="comment-target" class="comment-target" hidden><span>正在針對 <b id="comment-target-label"></b> 留言</span><button id="clear-comment-target" type="button">改為一般留言 ×</button></div>
+      <form id="comment-form" class="comment-form"><input id="comment-name" maxlength="18" placeholder="你的名字" autocomplete="nickname" required><input id="comment-message" maxlength="120" placeholder="說點什麼…" required><button>送出</button></form>
+      <div id="comments" class="comments"></div>
+    </section>
+  </main>
+  <div id="live-toast" class="live-toast"></div>
+  <script src="live.js"></script>
+</body>
+</html>

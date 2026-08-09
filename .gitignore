@@ -1,0 +1,18 @@
+# Runtime and local trial data
+__pycache__/
+*.py[cod]
+live-data/
+
+# Browser and UI test artifacts
+.playwright-cli/
+output/
+
+# Generated demo media
+video/build/
+*.mp4
+
+# Local editor and OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

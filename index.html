@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#102c2a" />
+  <title>羽球排點所｜團隊場次管理</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700;800;900&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell" id="app-shell">
+    <aside class="sidebar" aria-label="主要功能選單">
+      <div class="brand"><span class="brand-mark">羽</span><div><strong>羽球排點所</strong><small>Badminton Club</small></div></div>
+      <button class="sidebar-toggle" id="sidebar-toggle" type="button" aria-label="收起選單" aria-expanded="true" title="收起選單"><span>‹</span></button>
+      <nav id="nav">
+        <button class="nav-item active" data-view="courts" title="今日排點"><span>▦</span><em>今日排點</em></button>
+        <button class="nav-item" data-view="members" title="成員管理"><span>♙</span><em>成員管理</em></button>
+        <button class="nav-item" data-view="history" title="對戰紀錄"><span>↗</span><em>對戰紀錄</em></button>
+        <button class="nav-item" data-view="simulation" title="模擬測試"><span>◈</span><em>模擬測試</em></button>
+        <button class="nav-item" data-view="settings" title="排點設定"><span>⚙</span><em>排點設定</em></button>
+      </nav>
+      <div class="session-mini">
+        <span class="live-dot"></span><small>8/5 週三場次</small>
+        <strong>first🥇羽球臨打團</strong>
+        <p>18:00–22:30 · 板橋奧創</p>
+      </div>
+      <button class="profile"><span class="avatar">G</span><span><strong>Grace</strong><small>團長／活動管理員</small></span><b>⋯</b></button>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div><p class="eyebrow" id="eyebrow">SESSION CONTROL</p><h1 id="page-title">今晚，一起打場好球</h1></div>
+        <div class="header-actions"><button class="secondary live-board-button" id="open-live-board">◎ 球友看板</button><button class="icon-button" id="sound-toggle" title="語音播報">♬</button><button class="icon-button" id="fullscreen" title="全螢幕">⌗</button><button class="primary" id="auto-arrange">✦ 智慧排點</button></div>
+      </header>
+
+      <section id="courts-view" class="view active">
+        <div class="status-strip">
+          <div><span class="status-icon">◷</span><p>活動已進行</p><strong id="elapsed">01:26:32</strong></div>
+          <div><p>在場球友</p><strong id="onsite-count">18</strong><small> 人</small></div>
+          <div><p>進行中</p><strong id="playing-count">8</strong><small> 人</small></div>
+          <div><p>已完成</p><strong id="finished-count">12</strong><small> 場</small></div>
+          <div class="announcement"><span>8/5 週三</span><p id="announcement">B 時段 18:00–20:30 · C 時段 20:30–22:30 · 使用勝利藍蓋 B-01N＋K3</p></div>
+        </div>
+
+        <div class="section-heading"><div><p class="eyebrow">LIVE COURTS</p><h2>即時場地 <span id="court-session-label" class="session-court-badge"></span></h2></div><div class="legend"><span><i class="dot playing"></i>比賽中</span><span><i class="dot ready"></i>待上場</span><span><i class="dot idle"></i>空場</span></div></div>
+        <div id="court-grid" class="court-grid"></div>
+
+        <div class="workspace-grid">
+          <section class="panel player-pool">
+            <div class="panel-head"><div><p class="eyebrow">PLAYER POOL</p><h2>球友動態</h2></div><button class="secondary" id="add-player">＋ 新增球友</button></div>
+            <div class="tabs" id="pool-tabs"><button class="active" data-pool="waiting">備戰區 <b id="waiting-badge">0</b></button><button data-pool="resting">休息區 <b id="resting-badge">0</b></button><button data-pool="absent">未報到 <b id="absent-badge">0</b></button><button class="boss-tab" data-pool="boss">魔王區 <b id="boss-badge">4</b></button></div>
+            <div id="player-pool" class="player-cards"></div>
+            <p class="pool-hint" id="pool-availability-hint">備戰區只顯示目前時段可上場的球友。</p>
+          </section>
+
+          <section class="panel next-up" id="next-up-panel">
+            <div class="panel-head"><div><p class="eyebrow">NEXT UP</p><h2>候選對戰 <span id="suggestion-match-type" class="match-type-tag">自由雙打</span></h2></div><div class="candidate-controls"><select id="match-type-mode" aria-label="雙打模式"><option value="any">不限組合</option><option value="men">男雙</option><option value="women">女雙</option><option value="mixed">混雙</option></select><div class="mode-toggle" aria-label="排點模式"><button id="auto-mode" class="active" aria-pressed="true">智慧</button><button id="manual-mode" aria-pressed="false">手動</button></div><button class="text-button" id="refresh-match">重新推薦 ↻</button></div></div>
+            <div class="match-balance"><span>實力差</span><div><i id="balance-bar"></i></div><strong id="balance-label">均衡</strong></div>
+            <div id="manual-guide" class="manual-guide" hidden><b>手動調整</b><span>從左側拖曳球友到下方任一人名；手機可先點球友，再點要取代的位置。</span></div>
+            <form id="voice-command-form" class="voice-command-bar" hidden><button id="voice-listen" type="button" aria-label="開始語音輸入">🎙 說話</button><input id="voice-command" autocomplete="off" enterkeyhint="go" placeholder="例如：阿力換楷翔"><button type="submit">套用</button><small id="voice-command-hint">可說「阿力換楷翔」或「第一位換阿力」</small></form>
+            <div id="suggestion" class="suggestion"></div>
+            <div class="suggestion-actions"><button class="secondary" id="edit-suggestion">調整名單</button><button class="primary wide" id="assign-match">安排至空場</button></div>
+          </section>
+        </div>
+
+        <section class="panel fun-zone">
+          <div class="panel-head"><div><p class="eyebrow">FUN MATCH</p><h2>今晚趣味挑戰</h2></div><span id="fun-status" class="fun-status">選一個玩法，系統會產生可直接上場的組合</span></div>
+          <div class="fun-activities">
+            <button class="fun-activity boss-challenge" data-fun="boss"><span>👑</span><strong>挑戰魔王</strong><small>兩位球友挑戰兩位教練高手</small></button>
+            <button class="fun-activity" data-fun="lucky"><span>🎲</span><strong>幸運搭檔</strong><small>隨機配對，仍會避開拒絕搭檔</small></button>
+            <button class="fun-activity" data-fun="revenge"><span>🔥</span><strong>復仇戰</strong><small>最近一場原班人馬立即再戰</small></button>
+          </div>
+        </section>
+
+        <section class="panel wish-zone">
+          <div class="panel-head"><div><p class="eyebrow">WISH POOL</p><h2>球友許願池</h2></div><span class="wish-sync">手機送出後會即時出現在這裡</span></div>
+          <div class="wish-layout"><div id="admin-wish-list" class="admin-wish-list"><p class="pool-hint">目前還沒有球友許願。</p></div><aside class="wish-rules"><strong>許願點數</strong><span>勝一場 ＋1 點</span><span>每 3 連勝額外 ＋2 點</span><span>成功挑戰平均高 1 級 ＋2 點</span><span>正向 Elo 累積 25 分 ＋1 點</span><hr><span>指定搭檔 3 點 · 指定對手 4 點</span><span>混雙願望 3 點 · 魔王挑戰 5 點</span></aside></div>
+        </section>
+      </section>
+
+      <section id="members-view" class="view">
+        <div class="page-toolbar"><div><p class="eyebrow">CLUB ROSTER</p><h2>成員管理</h2><p>管理常駐球友、程度分數與搭檔偏好。</p></div><button class="primary" id="add-member">＋ 新增成員</button></div>
+        <div class="member-summary" id="member-summary"></div>
+        <div class="panel table-panel"><div class="table-tools"><input id="member-search" placeholder="搜尋姓名…"/><select id="level-filter"><option value="all">所有程度</option><option value="進階">進階</option><option value="中階">中階</option><option value="初階">初階</option></select></div><div class="table-wrap"><table><thead><tr><th>成員（點名稱編輯）</th><th>性別</th><th>報名等級</th><th>動態積分</th><th>許願點</th><th>程度</th><th>出席</th><th>勝率</th><th>偏好搭檔</th><th>拒絕搭檔</th><th>可上場時段</th><th>目標場數</th></tr></thead><tbody id="member-table"></tbody></table></div></div>
+      </section>
+
+      <section id="history-view" class="view">
+        <div class="page-toolbar"><div><p class="eyebrow">MATCH ARCHIVE</p><h2>今晚對戰紀錄</h2><p>快速回顧每場對戰、比分與積分變化。</p></div><button class="secondary" id="export-history">匯出 CSV</button></div>
+        <div class="history-layout"><div class="panel"><div id="history-list" class="history-list"></div></div><aside class="panel leaderboard"><p class="eyebrow">LEADERBOARD</p><h2>今晚戰績</h2><div id="leaderboard"></div></aside></div>
+      </section>
+
+      <section id="simulation-view" class="view">
+        <div class="page-toolbar"><div><p class="eyebrow">SIMULATION LAB</p><h2>排點模擬與品質測試</h2><p>使用目前的模擬球友資料，在不影響正式場次的情況下批次驗證排點結果。</p></div><div class="simulation-actions"><button class="secondary" id="export-simulation">匯出報告</button><button class="primary" id="run-simulation">▶ 執行 30 場測試</button></div></div>
+        <div class="simulation-banner"><div><span class="pulse-ring"></span><strong id="simulation-status">測試資料已準備</strong><small id="simulation-time">等待執行</small></div><p>測試目標：兼顧實力平衡、等待公平與上場次數平均。</p></div>
+        <div id="simulation-metrics" class="simulation-metrics"></div>
+        <div class="simulation-layout">
+          <section class="panel"><div class="panel-head"><div><p class="eyebrow">TEST RESULTS</p><h2>驗證項目</h2></div><span id="test-score" class="test-score">—</span></div><div id="test-results" class="test-results"></div></section>
+          <section class="panel"><div class="panel-head"><div><p class="eyebrow">PARTICIPATION</p><h2>上場次數分布</h2></div></div><div id="participation-chart" class="participation-chart"></div></section>
+        </div>
+        <section class="panel simulation-table-panel"><div class="panel-head"><div><p class="eyebrow">MATCH SAMPLE</p><h2>排點明細</h2></div><span class="table-note">顯示最近一次測試的 30 場結果</span></div><div class="table-wrap"><table><thead><tr><th>場次</th><th>A 隊</th><th>A 隊總分</th><th>B 隊</th><th>B 隊總分</th><th>實力差</th><th>品質</th></tr></thead><tbody id="simulation-table"></tbody></table></div></section>
+      </section>
+
+      <section id="settings-view" class="view">
+        <div class="page-toolbar"><div><p class="eyebrow">ARRANGEMENT RULES</p><h2>排點設定</h2><p>調整今晚的公平性、場地與輪替規則。</p></div><button class="primary" id="save-settings">儲存設定</button></div>
+        <div class="settings-grid">
+          <section class="panel setting-card"><p class="eyebrow">FAIRNESS</p><h3>選人策略</h3><label>優先目標<select id="priority-setting"><option>等待最久優先</option><option>已打較少優先</option><option>實力最接近優先</option></select></label><label class="switch-row"><span><b>實力配對</b><small>讓兩隊總分盡量接近</small></span><input type="checkbox" checked></label><label class="switch-row"><span><b>增加隨機性</b><small>在合理範圍內增加新鮮組合</small></span><input type="checkbox" checked></label><label class="switch-row"><span><b>避免重複搭檔</b><small>降低連續同隊機率</small></span><input type="checkbox" checked></label></section>
+          <section class="panel setting-card"><p class="eyebrow">COURTS</p><h3>場地與輪替</h3><div class="court-plan"><span><b>B 時段</b><small>18:00–20:30 · 容量 16 人</small><strong>2 面</strong></span><span><b>C 時段</b><small>20:30–22:30 · 容量 24 人</small><strong>3 面</strong></span></div><div class="stepper-row"><span><b>每人上限</b><small>達上限後自動休息</small></span><div class="stepper"><button data-step="limit" data-delta="-1">−</button><strong id="limit-setting">9</strong><button data-step="limit" data-delta="1">＋</button></div></div><label class="switch-row"><span><b>自動安排下一場</b><small>只會安排至目前時段可用場地</small></span><input id="auto-setting" type="checkbox"></label><label class="switch-row"><span><b>語音播報</b><small>安排上場時朗讀球友名稱</small></span><input id="speech-setting" type="checkbox" checked></label></section>
+          <section class="panel setting-card accent-card"><p class="eyebrow">SCORING</p><h3>積分與樂趣</h3><label class="switch-row"><span><b>賽後積分</b><small>依雙方實力更新積分</small></span><input type="checkbox" checked></label><label class="switch-row"><span><b>連勝徽章</b><small>連勝球友會獲得動態標記</small></span><input type="checkbox" checked></label><div class="fun-preview"><span>本週挑戰</span><strong>破冰王</strong><p>跟最多不同球友搭檔，即可解鎖 🏸</p></div></section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="modal" class="modal" aria-hidden="true"><div class="modal-backdrop" data-close></div><div class="modal-card"><button class="modal-close" data-close>×</button><div id="modal-content"></div></div></div>
+  <div id="toast" class="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>
