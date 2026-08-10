@@ -202,15 +202,18 @@ def login(req: func.HttpRequest) -> func.HttpResponse:
         auth.clear_failures(req)
     except Exception:
         logging.exception("rate limit clear failed")
-    return json_response(
-        {"authenticated": True, "user": expected_user},
-        headers={"Set-Cookie": auth.session_cookie(auth.issue_token(expected_user))},
-    )
+    return json_response({
+        "authenticated": True,
+        "user": expected_user,
+        "token": auth.issue_token(expected_user),
+        "expiresIn": auth.SESSION_TTL,
+    })
 
 
 @app.route(route="auth/logout", methods=["POST"])
 def logout(req: func.HttpRequest) -> func.HttpResponse:
-    return json_response({"authenticated": False}, headers={"Set-Cookie": auth.expired_cookie()})
+    # Tokens are stateless, so signing out is the caller discarding its copy.
+    return json_response({"authenticated": False})
 
 
 @app.route(route="auth/me", methods=["GET"])

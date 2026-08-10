@@ -1,7 +1,9 @@
 """Password gate for the admin console.
 
 SWA Free has no built-in username/password provider, so the check lives here:
-PBKDF2 password verification plus an HMAC-signed, HttpOnly session cookie.
+PBKDF2 password verification plus an HMAC-signed bearer token. Cookies are not an
+option because the Static Web Apps proxy strips Set-Cookie from managed function
+responses, and a custom Authorization header is inherently CSRF-safe anyway.
 """
 from __future__ import annotations
 
@@ -16,7 +18,6 @@ from typing import Any
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 from azure.data.tables import TableClient, UpdateMode
 
-COOKIE_NAME = "bc_session"
 SESSION_TTL = 12 * 60 * 60
 RATE_TABLE = "authattempts"
 RATE_WINDOW = 15 * 60
@@ -76,25 +77,15 @@ def verify_token(token: str) -> str | None:
     return claims.get("sub")
 
 
-def _cookie_value(header: str | None, name: str) -> str | None:
-    for chunk in (header or "").split(";"):
-        key, _, value = chunk.strip().partition("=")
-        if key == name:
-            return value
-    return None
+def _bearer_token(req: Any) -> str | None:
+    scheme, _, token = (req.headers.get("Authorization") or "").partition(" ")
+    token = token.strip()
+    return token if scheme.lower() == "bearer" and token else None
 
 
 def current_user(req: Any) -> str | None:
-    token = _cookie_value(req.headers.get("Cookie"), COOKIE_NAME)
+    token = _bearer_token(req)
     return verify_token(token) if token else None
-
-
-def session_cookie(token: str) -> str:
-    return f"{COOKIE_NAME}={token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age={SESSION_TTL}"
-
-
-def expired_cookie() -> str:
-    return f"{COOKIE_NAME}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0"
 
 
 def _rate_table() -> TableClient:
