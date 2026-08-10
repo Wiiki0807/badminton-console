@@ -1,37 +1,48 @@
-name: Azure Static Web Apps CI/CD
+name: Deploy to Azure Static Web Apps (production)
 
+# 只允許 repository owner 手動觸發 production 部署。
+# push main 與 pull_request 都不會部署，外部 collaborator merge 後需在 PR comment
+# 以「@Wiiki0807 請部署 production。」通知 owner，由 owner 手動執行本 workflow。
+#
+# Owner 需要在 GitHub 手動完成一次性設定（不要把 secret 寫進本 repository）：
+#   1. Settings > Environments > New environment > 建立名為 `production` 的 environment。
+#   2. 在該 environment 設定 Required reviewers = Wiiki0807。
+#   3. 在該 environment 設定 Deployment branches and tags = Selected branches，只允許 `main`。
+#   4. 將既有的 Static Web Apps deployment token secret
+#      `AZURE_STATIC_WEB_APPS_API_TOKEN_MANGO_BAY_0083F4C00`
+#      改放到這個 `production` environment 的 Environment secrets（並自 repository secrets 移除）。
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    types: [opened, synchronize, reopened, closed]
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "要部署的 branch、tag 或 commit SHA"
+        required: true
+        default: main
+        type: string
+
+# 只需要讀取原始碼；SWA deploy action 使用 deployment token，不需要 OIDC id-token。
+permissions:
+  contents: read
+
+# 避免 production 同時被部署多次。
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
 
 jobs:
-  build_and_deploy_job:
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed')
+  deploy:
     runs-on: ubuntu-latest
-    name: Build and Deploy Job
-    permissions:
-       id-token: write
-       contents: read
+    name: Build and Deploy to production
+    environment:
+      name: production
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref }}
           submodules: true
           lfs: false
-      - name: Install OIDC Client from Core Package
-        run: npm install @actions/core@1.6.0 @actions/http-client
-      - name: Get Id Token
-        uses: actions/github-script@v6
-        id: idtoken
-        with:
-           script: |
-               const coredemo = require('@actions/core')
-               return await coredemo.getIDToken()
-           result-encoding: string
+
       - name: Build And Deploy
         id: builddeploy
         uses: Azure/static-web-apps-deploy@v1
@@ -44,16 +55,4 @@ jobs:
           api_location: "api" # Api source code path - optional
           output_location: "" # Built app content directory - optional
           skip_app_build: true # Plain HTML/CSS/JS, no bundler to run
-          github_id_token: ${{ steps.idtoken.outputs.result }}
           ###### End of Repository/Build Configurations ######
-
-  close_pull_request_job:
-    if: github.event_name == 'pull_request' && github.event.action == 'closed'
-    runs-on: ubuntu-latest
-    name: Close Pull Request Job
-    steps:
-      - name: Close Pull Request
-        id: closepullrequest
-        uses: Azure/static-web-apps-deploy@v1
-        with:
-          action: "close"
