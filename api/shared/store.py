@@ -10,7 +10,7 @@ from typing import Any
 
 from azure.core import MatchConditions
 from azure.core.exceptions import ResourceExistsError, ResourceModifiedError, ResourceNotFoundError
-from azure.data.tables import TableClient, UpdateMode
+from azure.data.tables import EntityProperty, EdmType, TableClient, UpdateMode
 from azure.storage.blob import BlobClient
 
 CONTAINER = "live"
@@ -49,6 +49,17 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _epoch(value: int) -> EntityProperty:
+    """Table Storage defaults ints to Edm.Int32, which millisecond timestamps overflow."""
+    return EntityProperty(value, EdmType.INT64)
+
+
+def _as_int(value: Any) -> int:
+    if isinstance(value, EntityProperty):
+        value = value.value
+    return int(value or 0)
+
+
 def new_row_key() -> str:
     return f"{_MAX_TICKS - now_ms():013d}-{uuid.uuid4().hex}"
 
@@ -76,7 +87,7 @@ def _comment_from_entity(entity: Any) -> dict[str, Any]:
         "message": entity.get("message", ""),
         "matchId": entity.get("matchId", ""),
         "matchLabel": entity.get("matchLabel", ""),
-        "createdAt": int(entity.get("createdAt", 0)),
+        "createdAt": _as_int(entity.get("createdAt")),
         "reactions": reactions,
     }
 
@@ -87,12 +98,12 @@ def _wish_from_entity(entity: Any) -> dict[str, Any]:
         "playerName": entity.get("playerName", ""),
         "type": entity.get("type", ""),
         "target": entity.get("target", ""),
-        "cost": int(entity.get("cost", 0)),
+        "cost": _as_int(entity.get("cost")),
         "status": entity.get("status", "pending"),
-        "createdAt": int(entity.get("createdAt", 0)),
+        "createdAt": _as_int(entity.get("createdAt")),
     }
     if entity.get("updatedAt"):
-        wish["updatedAt"] = int(entity["updatedAt"])
+        wish["updatedAt"] = _as_int(entity["updatedAt"])
     return wish
 
 
@@ -120,7 +131,7 @@ def add_comment(name: str, message: str, match_id: str, match_label: str) -> dic
         "message": message,
         "matchId": match_id,
         "matchLabel": match_label,
-        "createdAt": now_ms(),
+        "createdAt": _epoch(now_ms()),
         "reactionsJson": "{}",
     }
     with _table("comments") as table:
@@ -137,7 +148,7 @@ def add_wish(player_name: str, wish_type: str, target: str) -> dict[str, Any]:
         "target": target,
         "cost": WISH_COSTS[wish_type],
         "status": "pending",
-        "createdAt": now_ms(),
+        "createdAt": _epoch(now_ms()),
     }
     with _table("wishes") as table:
         table.create_entity(entity)
@@ -151,7 +162,7 @@ def set_wish_status(wish_id: str, status: str) -> dict[str, Any] | None:
         except ResourceNotFoundError:
             return None
         entity["status"] = status
-        entity["updatedAt"] = now_ms()
+        entity["updatedAt"] = _epoch(now_ms())
         table.update_entity(entity, mode=UpdateMode.MERGE)
     return _wish_from_entity(entity)
 
