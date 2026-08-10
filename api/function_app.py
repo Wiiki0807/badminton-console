@@ -14,15 +14,17 @@ from shared import auth, store
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 MAX_BODY_BYTES = 1_000_000
+# Browsers assume UTF-8 for JSON, but other clients fall back to ISO-8859-1 without this.
+JSON_CONTENT_TYPE = "application/json; charset=utf-8"
 
 
 def json_response(value, status: int = 200, headers: dict[str, str] | None = None) -> func.HttpResponse:
-    merged = {"Cache-Control": "no-store"}
+    merged = {"Cache-Control": "no-store", "Content-Type": JSON_CONTENT_TYPE}
     merged.update(headers or {})
     return func.HttpResponse(
         json.dumps(value, ensure_ascii=False),
         status_code=status,
-        mimetype="application/json",
+        mimetype=JSON_CONTENT_TYPE,
         headers=merged,
     )
 
@@ -62,8 +64,8 @@ def live_bundle(req: func.HttpRequest) -> func.HttpResponse:
     return func.HttpResponse(
         payload,
         status_code=200,
-        mimetype="application/json",
-        headers={"ETag": etag, "Cache-Control": "no-store"},
+        mimetype=JSON_CONTENT_TYPE,
+        headers={"ETag": etag, "Cache-Control": "no-store", "Content-Type": JSON_CONTENT_TYPE},
     )
 
 
