@@ -9,14 +9,26 @@ function seededProfile(entry,index){
   let seed=[...entry.name].reduce((sum,char)=>sum+char.charCodeAt(0),index*97+41);seed=(seed*9301+49297)%233280;const signupLevel=5.5+(seed%8)*.5,rating=Math.round(signupLevel*100+((seed>>3)%41)-20),gender=seed%5<2?'女':'男',level=signupLevel>=8?'進階':signupLevel>=6.5?'中階':'初階',combined=entry.session==='B+C';return{id:index+1,name:entry.name,session:entry.session,signupLevel,rating,gender,level,games:0,wait:0,status:'waiting',wins:seed%6,losses:(seed>>4)%6,winStreak:0,wishPoints:3+(seed%5),ratingGainBank:0,attendance:75+(seed%24),partner:'—',preferredPartnerIds:[],blockedPartnerIds:[],availableFrom:entry.session==='C'?'20:30':'18:00',availableUntil:entry.session==='B'?'20:30':'22:30',targetGames:combined?9:5}
 }
 const state={
-  dataVersion:'2026-08-05-first-roster',sessionDate:'2026-08-05',sessionStart:'18:00',sessionEnd:'22:30',pool:'waiting',arrangementMode:'auto',matchTypeMode:'any',manualSelectedPlayerId:null,sidebarCollapsed:false,sound:true,gameLimit:9,finished:0,startedAt:Date.now(),
+  dataVersion:'2026-08-05-first-roster',savedAt:0,sessionDate:'2026-08-05',sessionStart:'18:00',sessionEnd:'22:30',pool:'waiting',arrangementMode:'auto',matchTypeMode:'any',manualSelectedPlayerId:null,sidebarCollapsed:false,sound:true,gameLimit:9,finished:0,startedAt:Date.now(),
   players:REGISTRATION_ROSTER.map(seededProfile),
   bossPlayers:createBossPlayers(),
   courts:[1,2,3].map(id=>({id,status:'idle',players:[]})),
   history:[],suggestion:[],simulation:null
 };
 
-try{const saved=JSON.parse(localStorage.getItem('badminton-club-state'));if(saved?.dataVersion===state.dataVersion&&saved.players&&saved.courts)Object.assign(state,saved)}catch(e){console.info('使用 8/5 報名名單')}
+const STATE_KEY='badminton-club-state';
+try{const saved=JSON.parse(localStorage.getItem(STATE_KEY));if(saved?.dataVersion===state.dataVersion&&saved.players&&saved.courts)Object.assign(state,saved)}catch(e){console.info('使用 8/5 報名名單')}
+// Two admin tabs each hold their own copy of state, so an unguarded write silently discards
+// whatever the other tab did. Stamp every save and let the older tab adopt the newer state.
+let applyingRemoteState=false;
+function saveState(){if(applyingRemoteState)return;state.savedAt=Date.now();localStorage.setItem(STATE_KEY,JSON.stringify(state))}
+window.addEventListener('storage',event=>{
+  if(event.key!==STATE_KEY||!event.newValue)return;
+  let incoming;try{incoming=JSON.parse(event.newValue)}catch(error){return}
+  if(incoming?.dataVersion!==state.dataVersion||!incoming.players||!(incoming.savedAt>(state.savedAt||0)))return;
+  applyingRemoteState=true;
+  try{Object.assign(state,incoming);render()}finally{applyingRemoteState=false}
+});
 if(!Array.isArray(state.bossPlayers)||state.bossPlayers.length!==BOSS_ROSTER.length)state.bossPlayers=createBossPlayers();
 state.history.forEach((match,index)=>{if(!match.id)match.id=`legacy-${match.court}-${String(match.time).replace(/\W/g,'')}-${index}`;if(match.manualReview==null)match.manualReview='' });
 state.players.forEach(p=>{if(p.signupLevel==null)p.signupLevel=Math.max(1,Math.round((p.rating/100)*2)/2)});
@@ -37,7 +49,7 @@ function toast(msg){const el=$('#toast');el.textContent=msg;el.classList.add('sh
 function openModal(html){$('#modal-content').innerHTML=html;$('#modal').classList.add('open');$('#modal').setAttribute('aria-hidden','false')}
 function closeModal(){$('#modal').classList.remove('open');$('#modal').setAttribute('aria-hidden','true')}
 function renderSidebar(){const collapsed=Boolean(state.sidebarCollapsed),shell=$('#app-shell'),button=$('#sidebar-toggle');shell.classList.toggle('sidebar-collapsed',collapsed);button.setAttribute('aria-expanded',String(!collapsed));button.setAttribute('aria-label',collapsed?'展開選單':'收起選單');button.title=collapsed?'展開選單':'收起選單'}
-function toggleSidebar(){state.sidebarCollapsed=!state.sidebarCollapsed;renderSidebar();localStorage.setItem('badminton-club-state',JSON.stringify(state))}
+function toggleSidebar(){state.sidebarCollapsed=!state.sidebarCollapsed;renderSidebar();saveState()}
 function timeToMinutes(value){const [h,m]=String(value||'00:00').split(':').map(Number);return h*60+m}
 function currentSessionMinutes(){const now=new Date(),today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`,minutes=now.getHours()*60+now.getMinutes(),start=timeToMinutes(state.sessionStart),end=timeToMinutes(state.sessionEnd);if(today!==state.sessionDate)return start;return minutes>=start&&minutes<=end?minutes:start}
 function activeSession(){return currentSessionMinutes()<timeToMinutes('20:30')?{key:'B',label:'B 時段',courts:2,start:'18:00',end:'20:30'}:{key:'C',label:'C 時段',courts:3,start:'20:30',end:'22:30'}}
@@ -100,7 +112,7 @@ function setArrangementMode(mode){
   }else{
     state.suggestion=[];getSuggestion();toast('已切回智慧排點並重新計算組合');
   }
-  renderArrangementMode();renderPool();renderSuggestion();localStorage.setItem('badminton-club-state',JSON.stringify(state));
+  renderArrangementMode();renderPool();renderSuggestion();saveState();
 }
 function handlePoolPlayerClick(id){
   if(Date.now()<suppressPoolClickUntil)return;
@@ -128,7 +140,7 @@ function replaceSuggestionPlayer(id,slotIndex){
   const incoming=player(id);if(state.arrangementMode!=='manual'||!incoming||incoming.status!=='waiting')return toast('只能使用備戰區球友');if(!isAvailableNow(incoming))return toast(`${incoming.name} 目前不在可上場時段`);if(slotIndex<0||slotIndex>3)return;
   const oldId=state.suggestion[slotIndex],existingIndex=state.suggestion.indexOf(id);if(existingIndex===slotIndex){state.manualSelectedPlayerId=null;renderPool();return toast(`${incoming.name} 已在這個位置`)}
   const next=[...state.suggestion];if(existingIndex>=0){next[existingIndex]=oldId;next[slotIndex]=id}else next[slotIndex]=id;if(suggestionHasBlockedPair(next)){state.manualSelectedPlayerId=null;renderPool();return toast('此調整會形成拒絕搭檔組合，已取消')};state.suggestion=next;
-  const replaced=player(oldId);state.manualSelectedPlayerId=null;renderSuggestion();renderPool();localStorage.setItem('badminton-club-state',JSON.stringify(state));toast(existingIndex>=0?`已交換 ${incoming.name} 與 ${replaced.name}`:`已用 ${incoming.name} 取代 ${replaced.name}`);
+  const replaced=player(oldId);state.manualSelectedPlayerId=null;renderSuggestion();renderPool();saveState();toast(existingIndex>=0?`已交換 ${incoming.name} 與 ${replaced.name}`:`已用 ${incoming.name} 取代 ${replaced.name}`);
 }
 function normalizeVoiceText(value){return String(value||'').toLowerCase().replace(/[\s，。,.、！!？?：:]/g,'')}
 function voiceSlotIndex(text){const value=normalizeVoiceText(text),aliases=[['第一位','第1位','一號','1號','a1','a隊一號','a隊1號','左上'],['第二位','第2位','二號','2號','a2','a隊二號','a隊2號','右上'],['第三位','第3位','三號','3號','b1','b隊一號','b隊1號','左下'],['第四位','第4位','四號','4號','b2','b隊二號','b隊2號','右下']];return aliases.findIndex(group=>group.some(alias=>value.includes(alias)))}
@@ -151,7 +163,7 @@ function startVoiceCommand(){
 function funModeName(mode){return({boss:'魔王挑戰',lucky:'幸運搭檔',revenge:'復仇戰'})[mode]||''}
 function shuffle(list){const copy=[...list];for(let i=copy.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[copy[i],copy[j]]=[copy[j],copy[i]]}return copy}
 function renderFunStatus(){const el=$('#fun-status');if(!el)return;el.textContent=state.funMode?`${funModeName(state.funMode)}已放入候選對戰，可調整或直接安排上場`:'選一個玩法，系統會產生可直接上場的組合'}
-function setFunSuggestion(mode,players){state.arrangementMode='auto';state.matchTypeMode='any';$('#match-type-mode').value='any';state.manualSelectedPlayerId=null;state.funMode=mode;state.suggestion=players.map(p=>p.id);renderArrangementMode();renderSuggestion();renderFunStatus();localStorage.setItem('badminton-club-state',JSON.stringify(state));toast(`${funModeName(mode)}組合已產生`);$('#next-up-panel').scrollIntoView({behavior:'smooth',block:'center'})}
+function setFunSuggestion(mode,players){state.arrangementMode='auto';state.matchTypeMode='any';$('#match-type-mode').value='any';state.manualSelectedPlayerId=null;state.funMode=mode;state.suggestion=players.map(p=>p.id);renderArrangementMode();renderSuggestion();renderFunStatus();saveState();toast(`${funModeName(mode)}組合已產生`);$('#next-up-panel').scrollIntoView({behavior:'smooth',block:'center'})}
 function generateFunMatch(mode){
   const waiting=state.players.filter(p=>p.status==='waiting'&&isAvailableNow(p));
   if(mode==='boss'){
@@ -206,7 +218,7 @@ function runSimulation(){
     {name:'參與機會覆蓋',detail:'所有在場球友至少上場一次',pass:allPlayed,value:`${counts.filter(n=>n>0).length} / ${counts.length}`},
     {name:'場次公平分布',detail:'最多與最少上場差距不超過 2 場',pass:spread<=2,value:`差 ${spread} 場`}
   ];
-  state.simulation={session:session.key,matches,players:virtual.map(p=>({id:p.id,name:p.name,rating:p.rating,games:p.simGames})),metrics:{avgDiff,maxDiff,spread,std:Number(std.toFixed(2)),total:matches.length,players:virtual.length,courts:session.courts},tests,at:new Date().toISOString()};renderSimulation();localStorage.setItem('badminton-club-state',JSON.stringify(state));toast(`模擬完成：${tests.filter(t=>t.pass).length}/${tests.length} 項通過`)
+  state.simulation={session:session.key,matches,players:virtual.map(p=>({id:p.id,name:p.name,rating:p.rating,games:p.simGames})),metrics:{avgDiff,maxDiff,spread,std:Number(std.toFixed(2)),total:matches.length,players:virtual.length,courts:session.courts},tests,at:new Date().toISOString()};renderSimulation();saveState();toast(`模擬完成：${tests.filter(t=>t.pass).length}/${tests.length} 項通過`)
 }
 function renderSimulation(){
   const s=state.simulation;if(!s){$('#simulation-metrics').innerHTML='';return}
@@ -220,10 +232,10 @@ function matchReview(match){if(match.manualReview)return match.manualReview;cons
 function publicStats(){const scores=new Map();state.history.forEach(match=>{const [aScore,bScore]=String(match.score).split(/[–-]/).map(Number);[...match.a,...match.b].forEach(name=>{if(!scores.has(name))scores.set(name,{name,wins:0,pointsFor:0,pointsAgainst:0,diff:0})});match.a.forEach(name=>{const item=scores.get(name);item.pointsFor+=aScore;item.pointsAgainst+=bScore;if(match.winner==='a')item.wins++});match.b.forEach(name=>{const item=scores.get(name);item.pointsFor+=bScore;item.pointsAgainst+=aScore;if(match.winner==='b')item.wins++})});return [...scores.values()].map(item=>({...item,diff:item.pointsFor-item.pointsAgainst})).sort((a,b)=>b.wins-a.wins||b.diff-a.diff||b.pointsFor-a.pointsFor)}
 function buildPublicSnapshot(){const session=activeSession();return{updatedAt:Date.now(),event:{name:'first🥇羽球臨打團',date:'8/5 週三',venue:'板橋奧創'},session:{key:session.key,label:session.label,courts:session.courts},courts:activeCourts().map(c=>({id:c.id,status:c.status,minutes:c.start?Math.floor((Date.now()-c.start)/60000):0,activity:funModeName(c.funMode),matchType:c.matchType||matchTypeFor(c.players.map(player)),a:c.players.slice(0,2).map(id=>player(id)?.name).filter(Boolean),b:c.players.slice(2,4).map(id=>player(id)?.name).filter(Boolean)})),recent:state.history.slice(0,12).map(match=>({id:match.id,court:match.court,a:match.a,b:match.b,score:match.score,time:match.time,activity:funModeName(match.activity),matchType:match.matchType||'自由雙打',review:matchReview(match),customReview:Boolean(match.manualReview),deltaA:match.deltaA??null,deltaB:match.deltaB??null})),stats:publicStats(),roster:state.players.filter(p=>p.status!=='absent'&&isAvailableNow(p)).map(p=>({name:p.name,gender:p.gender,wishPoints:p.wishPoints})).sort((a,b)=>a.name.localeCompare(b.name,'zh-TW'))}}
 let publishTimer,lastPublishedSignature='';
-function publishLiveState(){clearTimeout(publishTimer);publishTimer=setTimeout(()=>{const snapshot=buildPublicSnapshot();const {updatedAt,...comparable}=snapshot;const signature=JSON.stringify(comparable);if(signature===lastPublishedSignature)return;lastPublishedSignature=signature;adminFetch('/api/live-state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(snapshot)}).catch(()=>{})},1500)}
+function publishLiveState(){if(applyingRemoteState)return;clearTimeout(publishTimer);publishTimer=setTimeout(()=>{const snapshot=buildPublicSnapshot();const {updatedAt,...comparable}=snapshot;const signature=JSON.stringify(comparable);if(signature===lastPublishedSignature)return;lastPublishedSignature=signature;adminFetch('/api/live-state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(snapshot)}).catch(()=>{})},1500)}
 async function showLiveBoard(){const url=`${location.origin}/live.html`;openModal(`<p class="eyebrow">PLAYER LIVE BOARD</p><h2>球友即時看板</h2><p class="sub">把下方網址或 QR 分享給球友即可開啟。頁面只公開姓名、比分、趣味數據與留言。</p><div class="share-link"><input id="player-live-url" value="${url}" readonly><button class="secondary" onclick="copyLiveBoardLink()">複製</button></div><div class="modal-actions"><button class="secondary" data-close>關閉</button><button class="primary" onclick="window.open('${url}','_blank')">開啟看板</button></div>`)}
 async function copyLiveBoardLink(){const input=$('#player-live-url');try{await navigator.clipboard.writeText(input.value);toast('球友看板網址已複製')}catch(error){input.select();document.execCommand('copy');toast('球友看板網址已複製')}}
-function render(){renderSidebar();renderCourts();renderArrangementMode();renderSuggestion();renderPool();renderFunStatus();renderWishPool();renderMembers();renderHistory();renderSimulation();localStorage.setItem('badminton-club-state',JSON.stringify(state));publishLiveState()}
+function render(){renderSidebar();renderCourts();renderArrangementMode();renderSuggestion();renderPool();renderFunStatus();renderWishPool();renderMembers();renderHistory();renderSimulation();saveState();publishLiveState()}
 function renderElapsed(){const seconds=Math.max(0,Math.floor((Date.now()-state.startedAt)/1000)),h=String(Math.floor(seconds/3600)).padStart(2,'0'),m=String(Math.floor(seconds%3600/60)).padStart(2,'0'),s=String(seconds%60).padStart(2,'0');$('#elapsed').textContent=`${h}:${m}:${s}`}
 function assignToCourt(id){const session=activeSession(),suggested=state.suggestion.map(player);if(id>session.courts)return toast(`${session.label}僅開放 ${session.courts} 面場地`);if(state.suggestion.length<4)return toast('備戰區人數不足');if(new Set(state.suggestion).size!==4)return toast('候選名單有重複球友，請重新調整');if(state.suggestion.some(id=>!canJoinSuggestion(player(id))))return toast('候選名單包含目前不可上場的球友');if(!suggestionMatchesMode(suggested))return toast('目前組合不符合所選的雙打模式');if(suggestionHasBlockedPair(state.suggestion))return toast('候選名單包含拒絕搭檔組合');const c=state.courts.find(c=>c.id===id);if(!c)return toast('找不到可用場地');c.players=[...state.suggestion];c.status='playing';c.start=Date.now();c.funMode=state.funMode||'';c.matchType=matchTypeFor(suggested);state.suggestion.forEach(id=>{const p=player(id);p.status='playing';p.wait=0});const names=state.suggestion.map(id=>player(id).name).join('、');state.suggestion=[];state.funMode='';state.manualSelectedPlayerId=null;getSuggestion();render();toast(`已安排${c.matchType}至球場 ${id}`);if(state.sound&&'speechSynthesis'in window){speechSynthesis.cancel();speechSynthesis.speak(new SpeechSynthesisUtterance(`請 ${names} 到第 ${id} 場上場`))}}
 function finishCourt(id){const c=state.courts.find(c=>c.id===id),ps=c.players.map(player),aRating=ps[0].rating+ps[1].rating,bRating=ps[2].rating+ps[3].rating;openModal(`<p class="eyebrow">RECORD RESULT</p><h2>球場 ${id} · 記錄勝負</h2><p class="sub">完成後球友會回到備戰區，動態積分會依雙方強度使用 Elo 公式更新。</p><div class="result-picker"><div class="result-team"><label>${ps[0].name} / ${ps[1].name}<br>合計 ${aRating}</label><input id="score-a" type="number" value="21" min="0" max="30"></div><b>—</b><div class="result-team"><label>${ps[2].name} / ${ps[3].name}<br>合計 ${bRating}</label><input id="score-b" type="number" value="17" min="0" max="30"></div></div><label class="match-review-input">團主單場評語 <small>選填；留空時由系統依比分產生</small><textarea id="match-review" maxlength="80" placeholder="例如：多拍來回很精彩，兩隊防守都很穩！"></textarea></label><div class="modal-actions"><button class="secondary" data-close>取消</button><button class="primary" onclick="confirmFinish(${id})">完成記錄</button></div>`)}
@@ -253,9 +265,9 @@ $('#open-live-board').onclick=showLiveBoard;
 $('#pool-tabs').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;$$('#pool-tabs button').forEach(x=>x.classList.remove('active'));b.classList.add('active');state.pool=b.dataset.pool;renderPool()});
 $('#auto-mode').onclick=()=>setArrangementMode('auto');$('#manual-mode').onclick=()=>setArrangementMode('manual');
 $('#voice-listen').onclick=startVoiceCommand;$('#voice-command-form').onsubmit=event=>{event.preventDefault();applyVoiceCommand()};
-$('#match-type-mode').value=state.matchTypeMode;$('#match-type-mode').onchange=event=>{state.matchTypeMode=event.target.value;state.suggestion=[];state.funMode='';getSuggestion();renderSuggestion();renderPool();renderFunStatus();localStorage.setItem('badminton-club-state',JSON.stringify(state));toast(`已切換為 ${event.target.selectedOptions[0].textContent}`)};
+$('#match-type-mode').value=state.matchTypeMode;$('#match-type-mode').onchange=event=>{state.matchTypeMode=event.target.value;state.suggestion=[];state.funMode='';getSuggestion();renderSuggestion();renderPool();renderFunStatus();saveState();toast(`已切換為 ${event.target.selectedOptions[0].textContent}`)};
 $$('[data-fun]').forEach(button=>button.onclick=()=>generateFunMatch(button.dataset.fun));
-$('#refresh-match').onclick=()=>{state.funMode='';const result=getSuggestion(true);renderSuggestion();renderPool();renderFunStatus();localStorage.setItem('badminton-club-state',JSON.stringify(state));if(!result.candidateCount)toast('目前沒有符合條件的四人組合');else if(!result.changed)toast('目前限制下只有這一種合格組合');else toast(`已切換至第 ${result.rank}/${result.candidateCount} 個均衡方案`)};
+$('#refresh-match').onclick=()=>{state.funMode='';const result=getSuggestion(true);renderSuggestion();renderPool();renderFunStatus();saveState();if(!result.candidateCount)toast('目前沒有符合條件的四人組合');else if(!result.changed)toast('目前限制下只有這一種合格組合');else toast(`已切換至第 ${result.rank}/${result.candidateCount} 個均衡方案`)};
 $('#assign-match').onclick=()=>{const c=activeCourts().find(c=>c.status==='idle');c?assignToCourt(c.id):toast(`${activeSession().label}目前沒有空場`)};$('#auto-arrange').onclick=$('#assign-match').onclick;
 $('#add-player').onclick=addPerson;$('#add-member').onclick=addPerson;$('#member-search').oninput=renderMembers;$('#level-filter').onchange=renderMembers;
 $('#sound-toggle').onclick=()=>{state.sound=!state.sound;$('#sound-toggle').textContent=state.sound?'♬':'♩';toast(state.sound?'語音播報已開啟':'語音播報已靜音')};
@@ -264,7 +276,7 @@ $$('[data-step]').forEach(b=>b.onclick=()=>{state.gameLimit=Math.max(1,state.gam
 $('#save-settings').onclick=()=>toast('排點設定已儲存');$('#edit-suggestion').onclick=()=>setArrangementMode(state.arrangementMode==='manual'?'auto':'manual');
 $('#export-history').onclick=()=>{const rows=['場地,A隊,B隊,比分,時間',...state.history.map(h=>`${h.court},${h.a.join('/')},${h.b.join('/')},${h.score},${h.time}`)];const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+rows.join('\n')],{type:'text/csv'}));a.download='羽球對戰紀錄.csv';a.click();URL.revokeObjectURL(a.href)};
 $('#run-simulation').onclick=runSimulation;$('#export-simulation').onclick=()=>{if(!state.simulation)return toast('請先執行模擬測試');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(state.simulation,null,2)],{type:'application/json'}));a.download='排點模擬測試報告.json';a.click();URL.revokeObjectURL(a.href)};
-function bootConsole(){setInterval(renderElapsed,1000);setInterval(()=>{state.players.filter(p=>p.status==='waiting'&&isAvailableNow(p)).forEach(p=>p.wait++);renderCourts();renderSuggestion();renderPool();localStorage.setItem('badminton-club-state',JSON.stringify(state));publishLiveState()},60000);setInterval(refreshWishes,5000);renderElapsed();render();refreshWishes();if(!state.simulation||state.simulation.session!==activeSession().key)runSimulation();activateView(new URLSearchParams(location.search).get('view')||'courts')}
+function bootConsole(){setInterval(renderElapsed,1000);setInterval(()=>{state.players.filter(p=>p.status==='waiting'&&isAvailableNow(p)).forEach(p=>p.wait++);renderCourts();renderSuggestion();renderPool();saveState();publishLiveState()},60000);setInterval(refreshWishes,5000);renderElapsed();render();refreshWishes();if(!state.simulation||state.simulation.session!==activeSession().key)runSimulation();activateView(new URLSearchParams(location.search).get('view')||'courts')}
 let consoleBooted=false;
 // sessionStorage plus a custom header: the Static Web Apps proxy strips both Set-Cookie and Authorization.
 const TOKEN_KEY='badminton-admin-token';
