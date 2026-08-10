@@ -84,7 +84,7 @@ Check 'POST /api/wishes/action without token' 401 (Send '/api/wishes/action' 'PO
 Check 'GET /api/auth/me without token' 200 (Send '/api/auth/me').StatusCode
 $me = (Send '/api/auth/me').Content | ConvertFrom-Json
 Check 'auth/me reports signed out' 0 ([int][bool]$me.authenticated)
-Check 'POST /api/live-state with forged token' 401 (Send '/api/live-state' 'POST' @{ courts = @() } @{ Authorization = 'Bearer forged.token' }).StatusCode
+Check 'POST /api/live-state with forged token' 401 (Send '/api/live-state' 'POST' @{ courts = @() } @{ 'X-Admin-Token' = 'forged.token' }).StatusCode
 
 "`n--- new comment invalidates the ETag ---"
 Check 'GET /api/live-bundle after write' 200 (Send '/api/live-bundle' 'GET' $null @{ 'If-None-Match' = $etag }).StatusCode

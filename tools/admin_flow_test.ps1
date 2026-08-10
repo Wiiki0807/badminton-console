@@ -27,7 +27,7 @@ function Send([string]$Path, [string]$Method = 'GET', $Body = $null, [string]$To
         UseBasicParsing = $true
         Headers         = @{}
     }
-    if ($Token) { $params.Headers['Authorization'] = "Bearer $Token" }
+    if ($Token) { $params.Headers['X-Admin-Token'] = $Token }
     if ($null -ne $Body) {
         $params.Body = [System.Text.Encoding]::UTF8.GetBytes(($Body | ConvertTo-Json -Compress))
         $params.ContentType = 'application/json'

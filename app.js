@@ -266,10 +266,10 @@ $('#export-history').onclick=()=>{const rows=['場地,A隊,B隊,比分,時間',.
 $('#run-simulation').onclick=runSimulation;$('#export-simulation').onclick=()=>{if(!state.simulation)return toast('請先執行模擬測試');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(state.simulation,null,2)],{type:'application/json'}));a.download='排點模擬測試報告.json';a.click();URL.revokeObjectURL(a.href)};
 function bootConsole(){setInterval(renderElapsed,1000);setInterval(()=>{state.players.filter(p=>p.status==='waiting'&&isAvailableNow(p)).forEach(p=>p.wait++);renderCourts();renderSuggestion();renderPool();localStorage.setItem('badminton-club-state',JSON.stringify(state));publishLiveState()},60000);setInterval(refreshWishes,5000);renderElapsed();render();refreshWishes();if(!state.simulation||state.simulation.session!==activeSession().key)runSimulation();activateView(new URLSearchParams(location.search).get('view')||'courts')}
 let consoleBooted=false;
-// sessionStorage rather than a cookie: the Static Web Apps proxy strips Set-Cookie from managed functions.
+// sessionStorage plus a custom header: the Static Web Apps proxy strips both Set-Cookie and Authorization.
 const TOKEN_KEY='badminton-admin-token';
 const adminToken=()=>sessionStorage.getItem(TOKEN_KEY)||'';
-function authHeader(){const token=adminToken();return token?{Authorization:`Bearer ${token}`}:{}}
+function authHeader(){const token=adminToken();return token?{'X-Admin-Token':token}:{}}
 function showLoginGate(message){sessionStorage.removeItem(TOKEN_KEY);$('#login-gate').hidden=false;if(message){const error=$('#login-error');error.textContent=message;error.hidden=false}$('#login-username').focus()}
 function hideLoginGate(){$('#login-gate').hidden=true;$('#login-error').hidden=true}
 function enterConsole(){hideLoginGate();if(consoleBooted)return;consoleBooted=true;bootConsole()}

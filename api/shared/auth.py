@@ -1,9 +1,10 @@
 """Password gate for the admin console.
 
 SWA Free has no built-in username/password provider, so the check lives here:
-PBKDF2 password verification plus an HMAC-signed bearer token. Cookies are not an
-option because the Static Web Apps proxy strips Set-Cookie from managed function
-responses, and a custom Authorization header is inherently CSRF-safe anyway.
+PBKDF2 password verification plus an HMAC-signed token. Cookies and the Authorization
+header are both unusable because the Static Web Apps proxy strips Set-Cookie from
+managed function responses and reserves Authorization for its own auth, so the token
+travels in a custom header, which is inherently CSRF-safe.
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from typing import Any
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 from azure.data.tables import TableClient, UpdateMode
 
+TOKEN_HEADER = "X-Admin-Token"
 SESSION_TTL = 12 * 60 * 60
 RATE_TABLE = "authattempts"
 RATE_WINDOW = 15 * 60
@@ -78,9 +80,8 @@ def verify_token(token: str) -> str | None:
 
 
 def _bearer_token(req: Any) -> str | None:
-    scheme, _, token = (req.headers.get("Authorization") or "").partition(" ")
-    token = token.strip()
-    return token if scheme.lower() == "bearer" and token else None
+    # Not Authorization: the Static Web Apps proxy reserves that header and strips it.
+    return (req.headers.get(TOKEN_HEADER) or "").strip() or None
 
 
 def current_user(req: Any) -> str | None:
