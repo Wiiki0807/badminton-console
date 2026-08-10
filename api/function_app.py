@@ -59,13 +59,16 @@ def live_bundle(req: func.HttpRequest) -> func.HttpResponse:
 
     payload = json.dumps(bundle, ensure_ascii=False)
     etag = 'W/"%s"' % hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+    # no-cache, not no-store: the browser must keep a copy to revalidate against, or it
+    # aborts the 304 because there is nothing to revalidate.
+    revalidate = {"ETag": etag, "Cache-Control": "no-cache"}
     if req.headers.get("If-None-Match") == etag:
-        return func.HttpResponse(status_code=304, headers={"ETag": etag, "Cache-Control": "no-store"})
+        return func.HttpResponse(status_code=304, headers=revalidate)
     return func.HttpResponse(
         payload,
         status_code=200,
         mimetype=JSON_CONTENT_TYPE,
-        headers={"ETag": etag, "Cache-Control": "no-store", "Content-Type": JSON_CONTENT_TYPE},
+        headers={**revalidate, "Content-Type": JSON_CONTENT_TYPE},
     )
 
 
