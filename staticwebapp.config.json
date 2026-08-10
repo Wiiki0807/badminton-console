@@ -1,0 +1,25 @@
+{
+  "platform": {
+    "apiRuntime": "python:3.11"
+  },
+  "routes": [
+    { "route": "/server.py", "statusCode": 404 },
+    { "route": "/start-server.cmd", "statusCode": 404 },
+    { "route": "/tools/*", "statusCode": 404 },
+    { "route": "/video/*", "statusCode": 404 }
+  ],
+  "navigationFallback": {
+    "rewrite": "/index.html",
+    "exclude": ["/api/*", "/*.{css,js,json,png,jpg,svg,ico,webp}"]
+  },
+  "globalHeaders": {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin"
+  },
+  "responseOverrides": {
+    "401": {
+      "statusCode": 401
+    }
+  }
+}

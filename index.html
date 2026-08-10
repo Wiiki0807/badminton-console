@@ -33,7 +33,7 @@
     <main>
       <header class="topbar">
         <div><p class="eyebrow" id="eyebrow">SESSION CONTROL</p><h1 id="page-title">今晚，一起打場好球</h1></div>
-        <div class="header-actions"><button class="secondary live-board-button" id="open-live-board">◎ 球友看板</button><button class="icon-button" id="sound-toggle" title="語音播報">♬</button><button class="icon-button" id="fullscreen" title="全螢幕">⌗</button><button class="primary" id="auto-arrange">✦ 智慧排點</button></div>
+        <div class="header-actions"><button class="secondary live-board-button" id="open-live-board">◎ 球友看板</button><button class="icon-button" id="sound-toggle" title="語音播報">♬</button><button class="icon-button" id="fullscreen" title="全螢幕">⌷</button><button class="icon-button" id="logout" title="登出">⏻</button><button class="primary" id="auto-arrange">✦ 智慧排點</button></div>
       </header>
 
       <section id="courts-view" class="view active">
@@ -116,6 +116,19 @@
 
   <div id="modal" class="modal" aria-hidden="true"><div class="modal-backdrop" data-close></div><div class="modal-card"><button class="modal-close" data-close>×</button><div id="modal-content"></div></div></div>
   <div id="toast" class="toast"></div>
+  <div id="login-gate" class="login-gate" hidden>
+    <form id="login-form" class="login-card" autocomplete="on">
+      <p class="eyebrow">ADMIN CONSOLE</p>
+      <h2>管理端登入</h2>
+      <p class="sub">請輸入團主帳號密碼以進入排點主控台。</p>
+      <label for="login-username">帳號</label>
+      <input id="login-username" name="username" autocomplete="username" required>
+      <label for="login-password">密碼</label>
+      <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+      <p class="login-error" id="login-error" role="alert" hidden></p>
+      <button class="primary" id="login-submit" type="submit">登入</button>
+    </form>
+  </div>
   <script src="app.js"></script>
 </body>
 </html>

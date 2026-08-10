@@ -3,6 +3,11 @@ __pycache__/
 *.py[cod]
 live-data/
 
+# Azure Functions local secrets
+api/local.settings.json
+.venv/
+.python_packages/
+
 # Browser and UI test artifacts
 .playwright-cli/
 output/
