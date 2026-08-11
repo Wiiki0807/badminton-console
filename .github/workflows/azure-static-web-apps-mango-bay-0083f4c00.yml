@@ -54,10 +54,7 @@ jobs:
           require_file api/requirements.txt
           python3 -m pip install --disable-pip-version-check -r api/requirements.txt
           python3 -m py_compile api/function_app.py api/shared/store.py
-          python3 - <<'PY'
-          import azure.functions
-          from shared import store
-          PY
+          PYTHONPATH=api python3 -c 'import azure.functions; from shared import store'
 
       - name: Build And Deploy
         id: builddeploy
