@@ -39,6 +39,7 @@ jobs:
           fi
 
       - name: Validate deployment files
+        working-directory: ${{ github.workspace }}
         run: |
           require_file() {
             if [ ! -f "$1" ]; then
@@ -52,6 +53,10 @@ jobs:
           require_file api/shared/store.py
           require_file api/host.json
           require_file api/requirements.txt
+
+      - name: Validate API dependencies
+        working-directory: ${{ github.workspace }}
+        run: |
           python3 -m venv "$RUNNER_TEMP/api-venv"
           "$RUNNER_TEMP/api-venv/bin/python" -m pip install --disable-pip-version-check -r api/requirements.txt
           "$RUNNER_TEMP/api-venv/bin/python" -m py_compile api/function_app.py api/shared/store.py
