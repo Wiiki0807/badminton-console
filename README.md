@@ -52,7 +52,10 @@ python server.py --port 4173
 ## RocketAI LINE 官方帳號
 
 Azure Functions 提供 `/api/line-webhook`，可讓 LINE 球友查詢「今日場次」、「場上」、
-「最新比分」、「戰績」及「戰績 姓名」。請勿把 LINE 密鑰寫入程式或提交至 Git。
+「最新比分」、「戰績」、「戰績 姓名」、「我的戰績」、「積分 姓名」、「場數 姓名」
+及「猜下一組」。個人戰績會列出本日勝敗、得失分、動態積分與最近對戰比分；「自己」
+會先以球友的 LINE 顯示名稱比對本場姓名，若暱稱不同可改用明確姓名查詢。請勿把 LINE
+密鑰寫入程式或提交至 Git。
 
 Azure Static Web Apps 的環境變數：
 
@@ -65,6 +68,11 @@ LINE Developers Console 的 Webhook URL 設為：
 `https://你的網站/api/line-webhook`
 
 儲存後按「Verify」，成功後開啟「Use webhook」。
+
+若每次詢問前先出現「感謝您的訊息！很抱歉，本帳號無法個別回覆……」，那是 LINE
+Official Account Manager 內建的自動回應，不是 RocketAI 的程式回覆。請到「設定 →
+回應設定」，保留 Webhook／Messaging API，並關閉「自動回應訊息」；需要時也可另外
+關閉「加入好友的歡迎訊息」。
 
 - 手動排點模式：桌面拖曳或手機點選球友，取代／交換候選對戰位置後安排至空場
 - 球友可複選偏好搭檔與拒絕搭檔；智慧排點鼓勵偏好組合並禁止拒絕組合同隊
