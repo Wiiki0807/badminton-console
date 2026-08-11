@@ -1,8 +1,7 @@
-# 所有變更都需要 repository owner review。
-# 外部 collaborator 具有 Write 權限，但 main 的 merge 仍必須經過 @Wiiki0807 的 code owner review。
+# 預設由 repository owner 審查變更。
 * @Wiiki0807
 
-# CI/CD 與 deployment 設定：任何修改都可能影響 production 部署，必須由 owner review。
+# CI/CD 與 deployment 設定：任何修改都可能影響 production 自動部署，應由 owner review。
 /.github/ @Wiiki0807
 /.github/workflows/ @Wiiki0807
 /.github/CODEOWNERS @Wiiki0807

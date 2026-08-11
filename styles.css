@@ -49,18 +49,6 @@ html{-webkit-text-size-adjust:100%}body{-webkit-tap-highlight-color:transparent;
 
 @media(max-width:900px){.court-body,.court-card.idle .court-body,.court-grid[data-count="3"] .court-body{height:200px}.court-player strong{font-size:12px}.court-player small{font-size:9px}.player-card{min-height:112px}}
 @media(max-width:600px){.court-body,.court-card.idle .court-body,.court-grid[data-count="3"] .court-body{height:168px;aspect-ratio:auto}.court-team-label{left:7px;font-size:8px}.player-card{min-height:104px}}
-.login-gate{position:fixed;inset:0;z-index:120;display:grid;place-items:center;padding:24px;background:rgba(11,46,90,.86);backdrop-filter:blur(6px)}
-.login-gate[hidden]{display:none}
-.login-card{width:min(360px,100%);background:var(--white);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);padding:28px;display:flex;flex-direction:column;gap:8px}
-.login-card h2{margin:0}
-.login-card .sub{margin:0 0 8px;color:var(--muted);font-size:13px;line-height:1.6}
-.login-card label{font-size:12px;font-weight:600;color:var(--muted)}
-.login-card input{width:100%;padding:11px 13px;border:1px solid var(--line);border-radius:11px;background:var(--cream);color:var(--ink)}
-.login-card input:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
-.login-card .primary{margin-top:12px;padding:12px}
-.login-error{margin:6px 0 0;color:var(--orange);font-size:13px;font-weight:600}
-.login-error[hidden]{display:none}
-
 /* Signup level is a management-only primary indicator */
 .player-card .level,.female-player .level{right:9px;top:8px;padding:4px 7px!important;border:1px solid #e5b72f;border-radius:8px!important;background:#ffe477!important;color:#173c65!important;font:900 12px Outfit,sans-serif!important;box-shadow:0 2px 6px rgba(98,71,0,.12)}.player-card strong{padding-right:58px}.suggestion-player>small:first-of-type{margin-top:5px;color:#245d91;font-size:12px;font-weight:800}.court-player small{color:#fff5b5;font-weight:800}
 
