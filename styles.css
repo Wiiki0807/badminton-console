@@ -24,28 +24,47 @@ html{-webkit-text-size-adjust:100%}body{-webkit-tap-highlight-color:transparent;
 
 /* iPad 8th generation (10.2-inch, 810x1080 CSS px) */
 @media(min-width:901px) and (max-width:1180px){
-  main{padding:20px 20px 54px}
-  .workspace-grid{grid-template-columns:minmax(0,1.45fr) minmax(292px,.85fr);gap:12px}
-  .player-cards{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
-  .player-card{min-height:132px;padding:13px 12px}
-  .player-card>strong{display:-webkit-box;min-height:40px;padding-right:58px;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;white-space:normal;overflow-wrap:anywhere;font-size:16px;line-height:1.25;letter-spacing:-.2px}
-  .player-card .rating{margin-top:7px;font-size:21px}
-  .player-card .level,.female-player .level{top:9px;right:9px}
-  .suggestion-team{grid-template-columns:1fr;gap:7px}
+  main{padding:18px 18px 52px}
+  .workspace-grid{grid-template-columns:minmax(0,1.55fr) minmax(286px,.82fr);gap:10px}
+  .panel{padding:16px}
+  .player-cards{grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}
+  .player-card{min-height:112px;padding:10px 9px 8px}
+  .player-card>strong{display:block;min-height:23px;padding-right:47px;overflow:hidden;white-space:nowrap;text-overflow:clip;font-size:15px;line-height:1.45;letter-spacing:-.25px}
+  .player-card>strong.name-fit-sm{font-size:12px;letter-spacing:-.45px}
+  .player-card>strong.name-fit-xs{font-size:10px;letter-spacing:-.65px}
+  .player-card .rating{margin:5px 0 3px;font-size:20px}
+  .player-card .level,.female-player .level{top:8px;right:8px;min-width:44px;padding:4px 5px!important}
+  .player-card .level b{font-size:17px}
+  .player-card .level small{font-size:6px}
+  .player-card .gender-badge{right:8px;top:37px;width:19px;height:19px}
+  .player-card .player-metrics{gap:3px 6px;font-size:9px}
+  .player-card .schedule-meta{margin-top:4px!important;padding-top:3px;padding-right:28px;font-size:8px!important}
+  .session-remove{right:6px;bottom:6px;width:24px;height:24px}
+  .suggestion-team{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
   .next-up .panel-head{align-items:flex-start;flex-wrap:wrap;gap:10px}
   .next-up .candidate-controls{width:100%;justify-content:space-between}
-  .suggestion-player{min-height:76px;padding:12px 13px}
-  .suggestion-player>strong{padding-right:60px;white-space:normal;overflow-wrap:anywhere;font-size:15px;line-height:1.3}
-  .candidate-level{top:10px}
+  .suggestion-player{min-height:94px;padding:11px 9px}
+  .suggestion-player>strong{display:block;min-height:22px;padding-right:45px;overflow:hidden;white-space:nowrap;text-overflow:clip;font-size:14px;line-height:1.4}
+  .suggestion-player>strong.name-fit-sm{font-size:11px;letter-spacing:-.4px}
+  .suggestion-player>strong.name-fit-xs{font-size:9px;letter-spacing:-.6px}
+  .candidate-level{top:9px;right:8px;min-width:42px;padding:4px 5px}
+  .candidate-level b{font-size:16px}
+  .candidate-level small{font-size:6px!important}
+  .suggestion-player>small:first-of-type{font-size:10px}
+  .candidate-meta{font-size:7px!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .court-player strong{max-width:100%;font-size:14px;line-height:1.2;overflow-wrap:anywhere}
 }
 
 @media(min-width:700px) and (max-width:900px){
   .player-cards{grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}
   .player-card{min-height:130px;padding:12px 11px}
-  .player-card>strong{display:-webkit-box;min-height:40px;padding-right:55px;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;white-space:normal;overflow-wrap:anywhere;font-size:16px;line-height:1.25;letter-spacing:-.2px}
+  .player-card>strong{display:block;min-height:25px;padding-right:55px;overflow:hidden;white-space:nowrap;text-overflow:clip;font-size:16px;line-height:1.45;letter-spacing:-.2px}
+  .player-card>strong.name-fit-sm{font-size:13px}
+  .player-card>strong.name-fit-xs{font-size:11px}
   .player-card .rating{margin-top:7px;font-size:21px}
-  .suggestion-player>strong{white-space:normal;overflow-wrap:anywhere;font-size:16px;line-height:1.3}
+  .suggestion-player>strong{white-space:nowrap;overflow:hidden;text-overflow:clip;font-size:16px;line-height:1.3}
+  .suggestion-player>strong.name-fit-sm{font-size:13px}
+  .suggestion-player>strong.name-fit-xs{font-size:11px}
   .court-player strong{font-size:14px;line-height:1.2;overflow-wrap:anywhere}
   .court-player small{font-size:10px}
 }
