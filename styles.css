@@ -137,3 +137,8 @@ html{-webkit-text-size-adjust:100%}body{-webkit-tap-highlight-color:transparent;
 
 @media(min-width:901px) and (max-width:1180px){.player-card>strong.fit-name{width:calc(100% - 47px);padding-right:0;font-size:15px}.suggestion-player>strong.fit-name{width:calc(100% - 45px);padding-right:0;font-size:14px}.player-card .schedule-meta.session-tag{margin-top:4px!important;padding:3px 7px!important;font-size:9px!important}}
 @media(min-width:700px) and (max-width:900px){.player-card>strong.fit-name{width:calc(100% - 55px);padding-right:0;font-size:16px}.suggestion-player>strong.fit-name{width:calc(100% - 55px);padding-right:0;font-size:16px}}
+
+/* Name is primary; rating and progress are compact secondary information. */
+.player-card .rating{font:800 14px/1.2 Outfit,"Noto Sans TC",sans-serif}.suggestion-player .candidate-score{display:block;margin-top:5px;color:#245d91;font:800 11px/1.3 Outfit,"Noto Sans TC",sans-serif}.suggestion-player .candidate-gender-badge{z-index:3;right:4px;top:32px;width:19px;height:19px}.suggestion-player .candidate-meta{margin-top:5px!important;padding-top:4px;font-size:8px!important}.female-player .candidate-score{color:#a62760}
+@media(min-width:901px) and (max-width:1180px){.player-card .rating{font-size:13px}.suggestion-player .candidate-score{font-size:10px}.suggestion-player .candidate-gender-badge{right:3px;top:31px;width:18px;height:18px}}
+@media(min-width:700px) and (max-width:900px){.player-card .rating{font-size:14px}.suggestion-player .candidate-score{font-size:11px}}
