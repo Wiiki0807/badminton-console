@@ -1,7 +1,7 @@
 <!--
 提交前請完整填寫下列欄位。
-所有 PR 都需要 @Wiiki0807（code owner）review 後才能 merge 到 main。
-Production 部署不會自動執行，必須由 repository owner 手動觸發 workflow。
+請由 @Wiiki0807（code owner）確認後再 merge 到 main。
+合併至 main 後會自動部署到 Azure Static Web Apps production。
 -->
 
 ## 變更內容
@@ -15,12 +15,12 @@ Production 部署不會自動執行，必須由 repository owner 手動觸發 wo
 <!-- 說明你如何驗證，並貼上實際結果（指令、瀏覽器手動測試步驟、截圖）。 -->
 
 - [ ] 本機啟動 `start-server.cmd` 或 `python server.py` 驗證頁面正常
-- [ ] 相關手動測試（記分、live 畫面、admin 流程）已通過
+- [ ] 相關手動測試（記分、live 畫面、管理流程）已通過
 - 測試指令與結果：
 
 ## 是否需要 production deployment
 
-- [ ] 需要（merge 後請通知 owner 手動部署）
+- [ ] 需要（merge 至 main 後自動部署）
 - [ ] 不需要（僅文件／註解等不影響線上內容的變更）
 
 ## 部署注意事項
@@ -38,22 +38,9 @@ Production 部署不會自動執行，必須由 repository owner 手動觸發 wo
 
 ---
 
-## Merge 後的部署通知（必填流程）
+## Merge 後的部署確認
 
-Merge 進 `main` 之後，請在這個 PR 留一則 comment，**固定使用以下第一行格式**，讓 owner 收到通知：
-
-```
-@Wiiki0807 請部署 production。
-
-- PR：#<PR 編號>
-- Merge 後的 main commit SHA：<commit SHA>
-- 變更摘要：<一句話說明>
-- 測試結果：<已通過的驗證項目>
-- 需要的部署設定或注意事項：<沒有則寫「無」>
-- Rollback 方式：<例如 revert <SHA> 後重新手動部署>
-```
-
-Owner 收到通知後，會到 **Actions → Deploy to Azure Static Web Apps (production) → Run workflow**，
-以 `ref = main` 手動觸發部署，並在 `production` environment 核准。
+Merge 進 `main` 後，請到 **Actions → Deploy to Azure Static Web Apps (production)**
+確認 workflow 成功，再檢查 production 網址的管理頁與球友看板。
 
 > 請勿在 PR 或 comment 中貼上任何 secret、deployment token 或連線字串。

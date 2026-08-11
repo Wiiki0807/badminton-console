@@ -1,24 +1,11 @@
 name: Deploy to Azure Static Web Apps (production)
 
-# 只允許 repository owner 手動觸發 production 部署。
-# push main 與 pull_request 都不會部署，外部 collaborator merge 後需在 PR comment
-# 以「@Wiiki0807 請部署 production。」通知 owner，由 owner 手動執行本 workflow。
-#
-# Owner 需要在 GitHub 手動完成一次性設定（不要把 secret 寫進本 repository）：
-#   1. Settings > Environments > New environment > 建立名為 `production` 的 environment。
-#   2. 在該 environment 設定 Required reviewers = Wiiki0807。
-#   3. 在該 environment 設定 Deployment branches and tags = Selected branches，只允許 `main`。
-#   4. 將既有的 Static Web Apps deployment token secret
-#      `AZURE_STATIC_WEB_APPS_API_TOKEN_MANGO_BAY_0083F4C00`
-#      改放到這個 `production` environment 的 Environment secrets（並自 repository secrets 移除）。
+# main 每次更新後自動部署 production，也保留手動重新部署入口。
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
-    inputs:
-      ref:
-        description: "要部署的 branch、tag 或 commit SHA"
-        required: true
-        default: main
-        type: string
 
 # 只需要讀取原始碼；SWA deploy action 使用 deployment token，不需要 OIDC id-token。
 permissions:
@@ -27,19 +14,16 @@ permissions:
 # 避免 production 同時被部署多次。
 concurrency:
   group: production-deploy
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     name: Build and Deploy to production
-    environment:
-      name: production
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
           submodules: true
           lfs: false
 

@@ -74,6 +74,14 @@ class BadmintonHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
+        if path == "/api/live-bundle":
+            with LOCK:
+                bundle = {
+                    "state": read_json(STATE_FILE, {"courts": [], "recent": [], "stats": []}),
+                    "comments": read_json(COMMENTS_FILE, [])[-80:],
+                    "wishes": read_json(WISHES_FILE, [])[-80:],
+                }
+            return self.send_json(bundle)
         if path == "/api/live-state":
             with LOCK:
                 return self.send_json(read_json(STATE_FILE, {"courts": [], "recent": [], "stats": []}))

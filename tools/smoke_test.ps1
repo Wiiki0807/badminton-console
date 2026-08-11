@@ -1,7 +1,6 @@
 #Requires -Version 5.1
 <#
-Post-deploy smoke test: checks anonymous access, ETag caching, and that admin-only
-endpoints reject unauthenticated callers.
+Post-deploy smoke test: checks anonymous management/player access and ETag caching.
 
 Kept ASCII-only: Windows PowerShell 5.1 decodes BOM-less script files as ANSI.
 #>
@@ -78,13 +77,8 @@ $wish = Send '/api/wishes' 'POST' @{ playerName = 'smoke-test'; type = 'boss'; t
 Check 'POST /api/wishes (anonymous)' 201 $wish.StatusCode
 $wishId = ($wish.Content | ConvertFrom-Json).id
 
-"`n--- admin gate ---"
-Check 'POST /api/live-state without token' 401 (Send '/api/live-state' 'POST' @{ courts = @() }).StatusCode
-Check 'POST /api/wishes/action without token' 401 (Send '/api/wishes/action' 'POST' @{ id = $wishId; status = 'fulfilled' }).StatusCode
-Check 'GET /api/auth/me without token' 200 (Send '/api/auth/me').StatusCode
-$me = (Send '/api/auth/me').Content | ConvertFrom-Json
-Check 'auth/me reports signed out' 0 ([int][bool]$me.authenticated)
-Check 'POST /api/live-state with forged token' 401 (Send '/api/live-state' 'POST' @{ courts = @() } @{ 'X-Admin-Token' = 'forged.token' }).StatusCode
+"`n--- anonymous management action ---"
+Check 'POST /api/wishes/action (anonymous)' 200 (Send '/api/wishes/action' 'POST' @{ id = $wishId; status = 'fulfilled' }).StatusCode
 
 "`n--- new comment invalidates the ETag ---"
 Check 'GET /api/live-bundle after write' 200 (Send '/api/live-bundle' 'GET' $null @{ 'If-None-Match' = $etag }).StatusCode

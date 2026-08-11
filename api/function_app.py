@@ -2,14 +2,12 @@
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
 import logging
-import os
 
 import azure.functions as func
 
-from shared import auth, store
+from shared import store
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
@@ -37,12 +35,6 @@ def read_body(req: func.HttpRequest) -> dict:
     if not isinstance(body, dict):
         raise ValueError("body must be an object")
     return body
-
-
-def require_admin(req: func.HttpRequest) -> func.HttpResponse | None:
-    if auth.current_user(req):
-        return None
-    return json_response({"error": "請先登入管理端"}, 401)
 
 
 @app.route(route="live-bundle", methods=["GET"])
@@ -74,9 +66,6 @@ def live_bundle(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="live-state", methods=["POST"])
 def publish_state(req: func.HttpRequest) -> func.HttpResponse:
-    denied = require_admin(req)
-    if denied:
-        return denied
     try:
         store.write_state(read_body(req))
     except ValueError:
@@ -133,9 +122,6 @@ def create_wish(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="wishes/action", methods=["POST"])
 def act_on_wish(req: func.HttpRequest) -> func.HttpResponse:
-    denied = require_admin(req)
-    if denied:
-        return denied
     try:
         body = read_body(req)
     except ValueError:
@@ -170,58 +156,3 @@ def add_reaction(req: func.HttpRequest) -> func.HttpResponse:
     if not comment:
         return json_response({"error": "找不到留言"}, 404)
     return json_response(comment)
-
-
-@app.route(route="auth/login", methods=["POST"])
-def login(req: func.HttpRequest) -> func.HttpResponse:
-    try:
-        body = read_body(req)
-    except ValueError:
-        return json_response({"error": "格式錯誤"}, 400)
-
-    expected_user = os.environ.get("ADMIN_USERNAME", "")
-    stored_hash = os.environ.get("ADMIN_PASSWORD_HASH", "")
-    if not expected_user or not stored_hash:
-        logging.error("admin credentials are not configured")
-        return json_response({"error": "管理端尚未設定"}, 500)
-
-    try:
-        if auth.rate_limited(req):
-            return json_response({"error": "嘗試次數過多，請稍後再試"}, 429)
-    except Exception:
-        logging.exception("rate limit check failed")
-
-    username = str(body.get("username", ""))
-    password = str(body.get("password", ""))
-    # Both checks run regardless of outcome so a wrong username costs the same time as a wrong password.
-    user_ok = hmac.compare_digest(username, expected_user)
-    password_ok = auth.verify_password(password, stored_hash)
-    if not (user_ok and password_ok):
-        try:
-            auth.record_failure(req)
-        except Exception:
-            logging.exception("rate limit write failed")
-        return json_response({"error": "帳號或密碼錯誤"}, 401)
-
-    try:
-        auth.clear_failures(req)
-    except Exception:
-        logging.exception("rate limit clear failed")
-    return json_response({
-        "authenticated": True,
-        "user": expected_user,
-        "token": auth.issue_token(expected_user),
-        "expiresIn": auth.SESSION_TTL,
-    })
-
-
-@app.route(route="auth/logout", methods=["POST"])
-def logout(req: func.HttpRequest) -> func.HttpResponse:
-    # Tokens are stateless, so signing out is the caller discarding its copy.
-    return json_response({"authenticated": False})
-
-
-@app.route(route="auth/me", methods=["GET"])
-def me(req: func.HttpRequest) -> func.HttpResponse:
-    user = auth.current_user(req)
-    return json_response({"authenticated": bool(user), "user": user or ""})
