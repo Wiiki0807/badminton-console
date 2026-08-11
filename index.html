@@ -17,15 +17,16 @@
       <button class="sidebar-toggle" id="sidebar-toggle" type="button" aria-label="收起選單" aria-expanded="true" title="收起選單"><span>‹</span></button>
       <nav id="nav">
         <button class="nav-item active" data-view="courts" title="今日排點"><span>▦</span><em>今日排點</em></button>
+        <button class="nav-item" data-view="create" title="建立場次"><span>＋</span><em>建立場次</em></button>
         <button class="nav-item" data-view="members" title="成員管理"><span>♙</span><em>成員管理</em></button>
         <button class="nav-item" data-view="history" title="對戰紀錄"><span>↗</span><em>對戰紀錄</em></button>
         <button class="nav-item" data-view="simulation" title="模擬測試"><span>◈</span><em>模擬測試</em></button>
         <button class="nav-item" data-view="settings" title="排點設定"><span>⚙</span><em>排點設定</em></button>
       </nav>
       <div class="session-mini">
-        <span class="live-dot"></span><small>8/5 週三場次</small>
-        <strong>first🥇羽球臨打團</strong>
-        <p>18:00–22:30 · 板橋奧創</p>
+        <span class="live-dot"></span><small id="sidebar-session-date">8/5 週三場次</small>
+        <strong id="sidebar-event-name">first🥇羽球臨打團</strong>
+        <p id="sidebar-session-venue">18:00–22:30 · 板橋奧創</p>
       </div>
       <button class="profile"><span class="avatar">G</span><span><strong>Grace</strong><small>團長／活動管理員</small></span><b>⋯</b></button>
     </aside>
@@ -42,7 +43,7 @@
           <div><p>在場球友</p><strong id="onsite-count">18</strong><small> 人</small></div>
           <div><p>進行中</p><strong id="playing-count">8</strong><small> 人</small></div>
           <div><p>已完成</p><strong id="finished-count">12</strong><small> 場</small></div>
-          <div class="announcement"><span>8/5 週三</span><p id="announcement">B 時段 18:00–20:30 · C 時段 20:30–22:30 · 使用勝利藍蓋 B-01N＋K3</p></div>
+          <div class="announcement"><span id="session-date-badge">8/5 週三</span><p id="announcement">B 時段 18:00–20:30 · C 時段 20:30–22:30 · 使用勝利藍蓋 B-01N＋K3</p></div>
         </div>
 
         <div class="section-heading"><div><p class="eyebrow">LIVE COURTS</p><h2>即時場地 <span id="court-session-label" class="session-court-badge"></span></h2></div><div class="legend"><span><i class="dot playing"></i>比賽中</span><span><i class="dot ready"></i>待上場</span><span><i class="dot idle"></i>空場</span></div></div>
@@ -50,7 +51,7 @@
 
         <div class="workspace-grid">
           <section class="panel player-pool">
-            <div class="panel-head"><div><p class="eyebrow">PLAYER POOL</p><h2>球友動態</h2></div><button class="secondary" id="add-player">＋ 新增球友</button></div>
+            <div class="panel-head"><div><p class="eyebrow">PLAYER POOL</p><h2>球友動態</h2></div><button class="secondary" id="add-player">＋ 加入本場球友</button></div>
             <div class="tabs" id="pool-tabs"><button class="active" data-pool="waiting">備戰區 <b id="waiting-badge">0</b></button><button data-pool="resting">休息區 <b id="resting-badge">0</b></button><button data-pool="absent">未報到 <b id="absent-badge">0</b></button><button class="boss-tab" data-pool="boss">魔王區 <b id="boss-badge">4</b></button></div>
             <div id="player-pool" class="player-cards"></div>
             <p class="pool-hint" id="pool-availability-hint">備戰區只顯示目前時段可上場的球友。</p>
@@ -81,10 +82,32 @@
         </section>
       </section>
 
+      <section id="create-view" class="view">
+        <div class="page-toolbar create-toolbar"><div><p class="eyebrow">NEW SESSION</p><h2>建立場次</h2><p>可直接匯入 LINE 記事本，或從永久成員中手動挑選本場備戰球友。</p></div></div>
+        <div class="create-methods">
+          <button class="create-method active" id="create-method-line" type="button"><span>貼</span><strong>匯入 LINE 記事本</strong><small>自動辨識日期、B／C 時段與新成員</small></button>
+          <button class="create-method" id="create-method-manual" type="button"><span>選</span><strong>手動建立名單</strong><small>點選永久成員並指定參加時段</small></button>
+        </div>
+        <section class="panel create-panel" id="create-line-panel">
+          <div class="create-panel-heading"><div><p class="eyebrow">LINE NOTE</p><h2>貼上本週報名記事本</h2><p>匯入後會建立新的目前場次，舊場次紀錄不會混入。</p></div><button class="primary" id="create-import-line">開始貼上記事本</button></div>
+        </section>
+        <section class="panel create-panel" id="create-manual-panel" hidden>
+          <div class="create-form-grid">
+            <label>場次日期<input id="manual-session-date" type="date"></label>
+            <label>團名<input id="manual-event-name" type="text"></label>
+            <label>場地<input id="manual-venue" type="text"></label>
+            <label>使用羽球<input id="manual-shuttle" type="text"></label>
+          </div>
+          <div class="manual-roster-head"><div><h3>點選本場球友</h3><p>再次點選可取消；選取後可設定 B、C 或 B+C 時段。</p></div><label class="create-search">搜尋<input id="manual-member-search" placeholder="輸入球友姓名"></label></div>
+          <div id="manual-roster-grid" class="manual-roster-grid"></div>
+          <div class="create-submit-bar"><span id="manual-roster-summary">尚未選擇球友</span><button class="primary" id="create-manual-session">建立場次並前往今日排點</button></div>
+        </section>
+      </section>
+
       <section id="members-view" class="view">
-        <div class="page-toolbar"><div><p class="eyebrow">CLUB ROSTER</p><h2>成員管理</h2><p>管理常駐球友、程度分數與搭檔偏好。</p></div><button class="primary" id="add-member">＋ 新增成員</button></div>
+        <div class="page-toolbar"><div><p class="eyebrow">CLUB ROSTER</p><h2>成員管理</h2><p>管理可重複使用的永久成員資料；建立本場名單請使用「建立場次」。</p></div><div class="toolbar-actions"><button class="primary" id="add-member">＋ 新增成員</button></div></div>
         <div class="member-summary" id="member-summary"></div>
-        <div class="panel table-panel"><div class="table-tools"><input id="member-search" placeholder="搜尋姓名…"/><select id="level-filter"><option value="all">所有程度</option><option value="進階">進階</option><option value="中階">中階</option><option value="初階">初階</option></select></div><div class="table-wrap"><table><thead><tr><th>成員（點名稱編輯）</th><th>性別</th><th>報名等級</th><th>動態積分</th><th>許願點</th><th>程度</th><th>出席</th><th>勝率</th><th>偏好搭檔</th><th>拒絕搭檔</th><th>可上場時段</th><th>目標場數</th></tr></thead><tbody id="member-table"></tbody></table></div></div>
+        <div class="panel table-panel"><div class="table-tools"><input id="member-search" placeholder="搜尋姓名…"/><select id="level-filter"><option value="all">所有程度</option><option value="進階">進階</option><option value="中階">中階</option><option value="初階">初階</option></select></div><div class="table-wrap"><table><thead><tr><th>成員（點名稱編輯）</th><th>性別</th><th>報名等級</th><th>動態積分</th><th>許願點</th><th>程度</th><th>出席</th><th>勝率</th><th>偏好搭檔</th><th>拒絕搭檔</th><th>綁定出場</th><th>可上場時段</th><th>目標場數</th></tr></thead><tbody id="member-table"></tbody></table></div></div>
       </section>
 
       <section id="history-view" class="view">
