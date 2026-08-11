@@ -4,10 +4,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 
 import azure.functions as func
 
 from shared import store
+from shared import line_bot
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
@@ -35,6 +37,40 @@ def read_body(req: func.HttpRequest) -> dict:
     if not isinstance(body, dict):
         raise ValueError("body must be an object")
     return body
+
+
+@app.route(route="line-webhook", methods=["POST"])
+def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
+    """Receive RocketAI webhook events and reply with the current public match state."""
+    raw = req.get_body()
+    channel_secret = os.environ.get("LINE_CHANNEL_SECRET", "")
+    access_token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    signature = req.headers.get("x-line-signature", "")
+    if not channel_secret or not access_token:
+        logging.error("LINE environment variables are not configured")
+        return json_response({"error": "LINE 尚未完成設定"}, 503)
+    if not line_bot.verify_signature(raw, signature, channel_secret):
+        return json_response({"error": "invalid signature"}, 401)
+
+    try:
+        body = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return json_response({"error": "invalid body"}, 400)
+
+    # LINE's Verify action sends an empty events array and expects HTTP 200.
+    for event in body.get("events") or []:
+        message = event.get("message") or {}
+        reply_token = event.get("replyToken", "")
+        if event.get("type") != "message" or message.get("type") != "text" or not reply_token:
+            continue
+        try:
+            text = line_bot.answer(str(message.get("text", "")), store.read_state())
+            line_bot.reply(reply_token, text, access_token)
+        except Exception:
+            logging.exception("LINE message processing failed")
+            # A 200 response prevents LINE from repeatedly redelivering a message whose
+            # reply failed after the webhook itself was validated successfully.
+    return json_response({"ok": True})
 
 
 @app.route(route="live-bundle", methods=["GET"])

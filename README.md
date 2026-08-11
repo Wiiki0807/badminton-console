@@ -49,6 +49,23 @@ python server.py --port 4173
 
 目前資料保存在瀏覽器 `localStorage`，適合單機展示與場邊試用。正式多人版建議下一階段接上登入、雲端資料庫與即時同步。
 
+## RocketAI LINE 官方帳號
+
+Azure Functions 提供 `/api/line-webhook`，可讓 LINE 球友查詢「今日場次」、「場上」、
+「最新比分」、「戰績」及「戰績 姓名」。請勿把 LINE 密鑰寫入程式或提交至 Git。
+
+Azure Static Web Apps 的環境變數：
+
+- `LINE_CHANNEL_SECRET`：重新簽發後的 Channel secret
+- `LINE_CHANNEL_ACCESS_TOKEN`：Messaging API 的 Channel access token
+- `LIVE_BOARD_URL`：公開球友看板網址，例如 `https://你的網站/live.html`
+
+LINE Developers Console 的 Webhook URL 設為：
+
+`https://你的網站/api/line-webhook`
+
+儲存後按「Verify」，成功後開啟「Use webhook」。
+
 - 手動排點模式：桌面拖曳或手機點選球友，取代／交換候選對戰位置後安排至空場
 - 球友可複選偏好搭檔與拒絕搭檔；智慧排點鼓勵偏好組合並禁止拒絕組合同隊
 - 可設定每位球友的到場時間、離場時間與今晚目標場數，依剩餘時間及尚缺場數動態排序
