@@ -46,7 +46,7 @@
           <div class="announcement"><span id="session-date-badge">8/5 週三</span><p id="announcement">B 時段 18:00–20:30 · C 時段 20:30–22:30 · 使用勝利藍蓋 B-01N＋K3</p></div>
         </div>
 
-        <div class="section-heading"><div><p class="eyebrow">LIVE COURTS</p><h2>即時場地 <span id="court-session-label" class="session-court-badge"></span></h2></div><div class="legend"><span><i class="dot playing"></i>比賽中</span><span><i class="dot ready"></i>待上場</span><span><i class="dot idle"></i>空場</span></div></div>
+        <div class="section-heading"><div><p class="eyebrow">LIVE COURTS</p><h2>即時場地 <span id="court-session-label" class="session-court-badge"></span></h2></div><div class="court-heading-actions"><label class="court-session-switcher"><span>操作時段</span><select id="court-session-switch" aria-label="今日排點操作時段"><option value="auto">依時間自動</option><option value="B">B 時段 · 2 面</option><option value="C">C 時段 · 3 面</option></select></label><div class="legend"><span><i class="dot playing"></i>比賽中</span><span><i class="dot ready"></i>待上場</span><span><i class="dot idle"></i>空場</span></div></div></div>
         <div id="court-grid" class="court-grid"></div>
 
         <div class="workspace-grid">
@@ -120,7 +120,7 @@
       </section>
 
       <section id="simulation-view" class="view">
-        <div class="page-toolbar"><div><p class="eyebrow">SIMULATION LAB</p><h2>排點模擬與品質測試</h2><p>使用目前的模擬球友資料，在不影響正式場次的情況下批次驗證排點結果。</p></div><div class="simulation-actions"><button class="secondary" id="export-simulation">匯出報告</button><button class="primary" id="run-simulation">▶ 執行 30 場測試</button></div></div>
+        <div class="page-toolbar"><div><p class="eyebrow">SIMULATION LAB</p><h2>排點模擬與品質測試</h2><p>可指定 B／C 時段測試，不受目前時間影響，也不會改動正式排點。</p></div><div class="simulation-actions"><label class="simulation-session-picker"><span>測試時段</span><select id="simulation-session"><option value="B">B 時段 · 2 面</option><option value="C">C 時段 · 3 面</option></select></label><button class="secondary" id="export-simulation">匯出報告</button><button class="primary" id="run-simulation">▶ 執行 30 場測試</button></div></div>
         <div class="simulation-banner"><div><span class="pulse-ring"></span><strong id="simulation-status">測試資料已準備</strong><small id="simulation-time">等待執行</small></div><p>測試目標：兼顧實力平衡、等待公平與上場次數平均。</p></div>
         <div id="simulation-metrics" class="simulation-metrics"></div>
         <div class="simulation-layout">
