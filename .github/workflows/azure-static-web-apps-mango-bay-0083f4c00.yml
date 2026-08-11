@@ -52,7 +52,7 @@ jobs:
           require_file api/shared/store.py
           require_file api/host.json
           require_file api/requirements.txt
-          python -m py_compile api/function_app.py api/shared/store.py
+          python3 -m py_compile api/function_app.py api/shared/store.py
 
       - name: Build And Deploy
         id: builddeploy
