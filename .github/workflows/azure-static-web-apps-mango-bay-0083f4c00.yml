@@ -19,6 +19,8 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: production
     name: Build and Deploy to production
     steps:
       - name: Checkout
@@ -26,6 +28,40 @@ jobs:
         with:
           submodules: true
           lfs: false
+
+      - name: Validate deployment token
+        env:
+          SWA_DEPLOYMENT_TOKEN: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_MANGO_BAY_0083F4C00 }}
+        shell: bash
+        run: |
+          if [[ -z "${SWA_DEPLOYMENT_TOKEN//[[:space:]]/}" ]]; then
+            echo "::error title=Missing Azure Static Web Apps deployment token::Set AZURE_STATIC_WEB_APPS_API_TOKEN_MANGO_BAY_0083F4C00 as a repository or production environment secret."
+            exit 1
+          fi
+
+      - name: Validate deployment files
+        working-directory: ${{ github.workspace }}
+        run: |
+          require_file() {
+            if [ ! -f "$1" ]; then
+              echo "::error title=Missing deployment file::$1 not found."
+              exit 1
+            fi
+          }
+          require_file index.html
+          require_file staticwebapp.config.json
+          require_file api/function_app.py
+          require_file api/shared/store.py
+          require_file api/host.json
+          require_file api/requirements.txt
+
+      - name: Validate API dependencies
+        working-directory: ${{ github.workspace }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/api-venv"
+          "$RUNNER_TEMP/api-venv/bin/python" -m pip install --quiet --disable-pip-version-check -r api/requirements.txt
+          "$RUNNER_TEMP/api-venv/bin/python" -m py_compile api/function_app.py api/shared/store.py
+          PYTHONPATH=api "$RUNNER_TEMP/api-venv/bin/python" -c 'import azure.functions; from shared import store'
 
       - name: Build And Deploy
         id: builddeploy
