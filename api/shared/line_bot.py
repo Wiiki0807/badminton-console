@@ -10,6 +10,7 @@ from typing import Any
 from urllib import error, request
 
 LINE_REPLY_URL = "https://api.line.me/v2/bot/message/reply"
+LINE_PROFILE_URL = "https://api.line.me/v2/bot/profile/{user_id}"
 
 
 def verify_signature(raw_body: bytes, signature: str, channel_secret: str) -> bool:
@@ -93,6 +94,119 @@ def _stats_summary(state: dict[str, Any], query: str = "") -> str:
     return "\n".join(lines)
 
 
+def _normalize(value: Any) -> str:
+    return "".join(str(value or "").strip().casefold().split())
+
+
+def _player_rows(state: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = state.get("players") or state.get("roster") or []
+    return [item for item in rows if item.get("name")]
+
+
+def _find_player(state: dict[str, Any], query: str, display_name: str = "") -> tuple[dict[str, Any] | None, str]:
+    raw = str(query or "").strip()
+    normalized_raw = _normalize(raw).rstrip("的")
+    self_query = not raw or normalized_raw in {"自己", "自已", "本人", "我的", "我"}
+    lookup = display_name.strip() if self_query else raw
+    if not lookup:
+        return None, "請輸入球友姓名，例如「戰績 阿力」。"
+    normalized = _normalize(lookup)
+    rows = _player_rows(state)
+    exact = next((item for item in rows if _normalize(item.get("name")) == normalized), None)
+    if exact:
+        return exact, ""
+    partial = [item for item in rows if normalized in _normalize(item.get("name")) or _normalize(item.get("name")) in normalized]
+    if len(partial) == 1:
+        return partial[0], ""
+    if self_query and display_name:
+        return None, f"LINE 顯示名稱「{display_name}」尚未對應到本場球友，請改輸入「戰績 姓名」。"
+    return None, f"找不到球友「{lookup}」，請確認姓名。"
+
+
+def _player_stats(state: dict[str, Any], name: str) -> dict[str, Any]:
+    return next((item for item in state.get("stats") or [] if _normalize(item.get("name")) == _normalize(name)), {})
+
+
+def _player_matches(state: dict[str, Any], name: str) -> list[dict[str, Any]]:
+    return [
+        match for match in state.get("recent") or []
+        if any(_normalize(item) == _normalize(name) for item in [*(match.get("a") or []), *(match.get("b") or [])])
+    ]
+
+
+def _performance_summary(state: dict[str, Any], query: str, display_name: str = "") -> str:
+    player, error_message = _find_player(state, query, display_name)
+    if not player:
+        return error_message
+    name = str(player.get("name"))
+    stats = _player_stats(state, name)
+    matches = _player_matches(state, name)
+    games = int(player.get("games", len(matches)) or 0)
+    wins = int(stats.get("wins", player.get("wins", 0)) or 0)
+    losses = int(player.get("losses", max(0, games - wins)) or 0)
+    lines = [
+        f"📊 {name} 本日戰績",
+        f"已打 {games} 場｜{wins} 勝 {losses} 敗",
+        f"得分 {int(stats.get('pointsFor', 0) or 0)}｜失分 {int(stats.get('pointsAgainst', 0) or 0)}｜得失分 {int(stats.get('diff', 0) or 0):+d}",
+        f"⚔️ 目前動態積分 {int(player.get('rating', 0) or 0)}",
+    ]
+    if matches:
+        lines.append("\n最近對戰：")
+        for match in matches[:5]:
+            team_a = "／".join(match.get("a") or [])
+            team_b = "／".join(match.get("b") or [])
+            lines.append(f"球場 {match.get('court')}｜{team_a} {match.get('score', '')} {team_b}")
+    else:
+        lines.append("\n今天尚無已完成的對戰比分。")
+    return "\n".join(lines)
+
+
+def _rating_summary(state: dict[str, Any], query: str, display_name: str = "") -> str:
+    player, error_message = _find_player(state, query, display_name)
+    if not player:
+        return error_message
+    name = str(player.get("name"))
+    delta = 0
+    for match in _player_matches(state, name):
+        side_a = any(_normalize(item) == _normalize(name) for item in match.get("a") or [])
+        delta += int(match.get("deltaA" if side_a else "deltaB", 0) or 0)
+    return f"⚔️ {name} 目前動態積分：{int(player.get('rating', 0) or 0)}\n今日積分變化：{delta:+d}"
+
+
+def _games_summary(state: dict[str, Any], query: str, display_name: str = "") -> str:
+    player, error_message = _find_player(state, query, display_name)
+    if not player:
+        return error_message
+    games = int(player.get("games", 0) or 0)
+    target = int(player.get("targetGames", 0) or 0)
+    target_text = f"／目標 {target} 場" if target else ""
+    return f"🏸 {player.get('name')} 今日已打 {games} 場{target_text}"
+
+
+def _next_match_summary(state: dict[str, Any]) -> str:
+    next_up = state.get("nextUp") or {}
+    team_a = next_up.get("a") or []
+    team_b = next_up.get("b") or []
+    if len(team_a) != 2 or len(team_b) != 2:
+        return "目前還沒有可預測的下一組候選對戰。"
+    lines = [
+        "🔮 猜測下一組對戰",
+        f"A隊｜{'／'.join(team_a)}",
+        "VS",
+        f"B隊｜{'／'.join(team_b)}",
+    ]
+    detail = " · ".join(
+        item for item in (
+            str(next_up.get("matchType") or ""),
+            f"實力差 {int(next_up.get('diff', 0) or 0)} 分",
+        ) if item
+    )
+    if detail:
+        lines.append(detail)
+    lines.append("候選名單仍可能因團主調整或球友狀態而變動。")
+    return "\n".join(lines)
+
+
 def help_message() -> str:
     return (
         "我是 RocketAI 🏸\n"
@@ -102,11 +216,20 @@ def help_message() -> str:
         "• 最新比分\n"
         "• 戰績\n"
         "• 戰績 姓名（例如：戰績 阿力）\n"
+        "• 我的戰績／戰績 自己\n"
+        "• 積分 姓名／我的積分\n"
+        "• 場數 姓名／我的場數\n"
+        "• 猜下一組\n"
         "• 看板"
     )
 
 
-def answer(text: str, state: dict[str, Any]) -> str:
+def needs_profile(text: str) -> bool:
+    normalized = _normalize(text)
+    return any(word in normalized for word in ("自己", "自已", "本人", "我的"))
+
+
+def answer(text: str, state: dict[str, Any], display_name: str = "") -> str:
     normalized = "".join(str(text or "").strip().split())
     if not normalized:
         return help_message()
@@ -118,12 +241,49 @@ def answer(text: str, state: dict[str, Any]) -> str:
         return _court_summary(state)
     if normalized in {"比分", "最新比分", "結果", "賽果"}:
         return _score_summary(state)
+    if normalized.startswith("查詢"):
+        normalized = normalized[2:]
+    if normalized in {"下一組", "下一場", "猜下一組", "猜測下一組", "猜測下一組對戰組合", "預測下一組", "候選對戰"}:
+        return _next_match_summary(state)
+    if normalized.startswith("我的戰績") or normalized in {"自己戰績", "自已戰績", "本人戰績"}:
+        return _performance_summary(state, "自己", display_name)
     if normalized.startswith("戰績"):
-        return _stats_summary(state, normalized[2:])
+        query = normalized[2:] or ""
+        return _stats_summary(state) if not query else _performance_summary(state, query, display_name)
+    if "本日戰績" in normalized or "今日戰績" in normalized or "對戰分數" in normalized:
+        query = normalized.replace("本日戰績", "").replace("今日戰績", "").replace("和對戰分數", "").replace("與對戰分數", "").replace("對戰分數", "")
+        return _performance_summary(state, query or "自己", display_name)
+    if normalized.startswith("我的積分") or normalized in {"自己積分", "自已積分", "累積積分"}:
+        return _rating_summary(state, "自己", display_name)
+    if normalized.startswith("積分"):
+        return _rating_summary(state, normalized[2:] or "自己", display_name)
+    if "累積積分" in normalized:
+        return _rating_summary(state, normalized.replace("累積積分", "") or "自己", display_name)
+    if normalized.startswith("我的場數") or normalized in {"自己場數", "自已場數", "已打場數"}:
+        return _games_summary(state, "自己", display_name)
+    if normalized.startswith("場數"):
+        return _games_summary(state, normalized[2:] or "自己", display_name)
+    if "已打場數" in normalized:
+        return _games_summary(state, normalized.replace("已打場數", "") or "自己", display_name)
     if normalized in {"看板", "即時看板", "連結"}:
         live_url = os.environ.get("LIVE_BOARD_URL", "").strip()
         return f"🏸 球友即時看板\n{live_url}" if live_url else "即時看板網址尚未設定。"
     return "我目前還不懂這句話。\n\n" + help_message()
+
+
+def get_display_name(user_id: str, access_token: str) -> str:
+    if not user_id:
+        return ""
+    req = request.Request(
+        LINE_PROFILE_URL.format(user_id=user_id),
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    try:
+        with request.urlopen(req, timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            return str(payload.get("displayName", "")).strip()
+    except (error.HTTPError, error.URLError, TimeoutError, json.JSONDecodeError):
+        return ""
 
 
 def reply(reply_token: str, text: str, access_token: str) -> None:

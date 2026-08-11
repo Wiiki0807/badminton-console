@@ -64,7 +64,12 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
         if event.get("type") != "message" or message.get("type") != "text" or not reply_token:
             continue
         try:
-            text = line_bot.answer(str(message.get("text", "")), store.read_state())
+            incoming_text = str(message.get("text", ""))
+            source = event.get("source") or {}
+            display_name = ""
+            if line_bot.needs_profile(incoming_text):
+                display_name = line_bot.get_display_name(str(source.get("userId", "")), access_token)
+            text = line_bot.answer(incoming_text, store.read_state(), display_name)
             line_bot.reply(reply_token, text, access_token)
         except Exception:
             logging.exception("LINE message processing failed")
