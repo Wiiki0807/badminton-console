@@ -52,6 +52,10 @@
         <div class="workspace-grid">
           <section class="panel player-pool">
             <div class="panel-head"><div><p class="eyebrow">PLAYER POOL</p><h2>球友動態</h2></div><button class="secondary" id="add-player">＋ 加入本場球友</button></div>
+            <div class="payment-reminder" id="payment-reminder">
+              <button type="button" id="payment-reminder-toggle" aria-expanded="false"><span class="payment-reminder-icon">$</span><span><strong>未付費提醒</strong><small id="payment-summary">讀取中</small></span><b id="unpaid-count">0</b><i aria-hidden="true">⌄</i></button>
+              <div class="unpaid-player-list" id="unpaid-player-list" hidden></div>
+            </div>
             <div class="tabs" id="pool-tabs"><button class="active" data-pool="waiting">備戰區 <b id="waiting-badge">0</b></button><button data-pool="resting">休息區 <b id="resting-badge">0</b></button><button data-pool="absent">未報到 <b id="absent-badge">0</b></button><button class="boss-tab" data-pool="boss">魔王區 <b id="boss-badge">4</b></button></div>
             <div id="player-pool" class="player-cards"></div>
             <p class="pool-hint" id="pool-availability-hint">備戰區只顯示目前時段可上場的球友。</p>
