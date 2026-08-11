@@ -9,7 +9,7 @@ function seededProfile(entry,index){
   let seed=[...entry.name].reduce((sum,char)=>sum+char.charCodeAt(0),index*97+41);seed=(seed*9301+49297)%233280;const signupLevel=5.5+(seed%8)*.5,rating=Math.round(signupLevel*100+((seed>>3)%41)-20),gender=seed%5<2?'女':'男',level=signupLevel>=8?'進階':signupLevel>=6.5?'中階':'初階',combined=entry.session==='B+C';return{id:index+1,name:entry.name,session:entry.session,signupLevel,rating,gender,level,games:0,wait:0,status:'waiting',paid:false,wins:seed%6,losses:(seed>>4)%6,winStreak:0,wishPoints:3+(seed%5),ratingGainBank:0,attendance:75+(seed%24),partner:'—',preferredPartnerIds:[],blockedPartnerIds:[],boundPartnerId:null,boundSession:'B+C',availableFrom:entry.session==='C'?'20:30':'18:00',availableUntil:entry.session==='B'?'20:30':'22:30',targetGames:combined?9:5}
 }
 const state={
-  dataVersion:'2026-08-05-first-roster',savedAt:0,sessionDate:'2026-08-05',sessionDateLabel:'8/5 週三',eventName:'first🥇羽球臨打團',venue:'板橋奧創',shuttle:'勝利藍蓋 B-01N＋K3',sessionStart:'18:00',sessionEnd:'22:30',pool:'waiting',arrangementMode:'auto',matchTypeMode:'any',manualSelectedPlayerId:null,paymentReminderOpen:false,sidebarCollapsed:false,sound:true,gameLimit:9,finished:0,startedAt:Date.now(),
+  dataVersion:'2026-08-05-first-roster',savedAt:0,sessionDate:'2026-08-05',sessionDateLabel:'8/5 週三',eventName:'first🥇羽球臨打團',venue:'板橋奧創',shuttle:'勝利藍蓋 B-01N＋K3',sessionStart:'18:00',sessionEnd:'22:30',pool:'waiting',arrangementMode:'auto',matchTypeMode:'any',manualSelectedPlayerId:null,paymentReminderOpen:false,sidebarCollapsed:false,sound:true,gameLimit:9,finished:0,startedAt:Date.now(),sessionOverrideKey:'auto',simulationSessionKey:'B',
   players:REGISTRATION_ROSTER.map(seededProfile),
   rosterIds:REGISTRATION_ROSTER.map((_,index)=>index+1),
   bossPlayers:createBossPlayers(),
@@ -32,6 +32,8 @@ window.addEventListener('storage',event=>{
 });
 if(!Array.isArray(state.bossPlayers)||state.bossPlayers.length!==BOSS_ROSTER.length)state.bossPlayers=createBossPlayers();
 if(!Array.isArray(state.rosterIds))state.rosterIds=state.players.map(p=>p.id);
+if(!['auto','B','C'].includes(state.sessionOverrideKey))state.sessionOverrideKey='auto';
+if(!['B','C'].includes(state.simulationSessionKey))state.simulationSessionKey='B';
 state.rosterIds=state.rosterIds.filter(id=>state.players.some(p=>p.id===id));
 state.history.forEach((match,index)=>{if(!match.id)match.id=`legacy-${match.court}-${String(match.time).replace(/\W/g,'')}-${index}`;if(match.manualReview==null)match.manualReview='' });
 state.players.forEach(p=>{if(p.signupLevel==null)p.signupLevel=Math.max(1,Math.round((p.rating/100)*2)/2)});
@@ -56,11 +58,14 @@ function closeModal(){$('#modal').classList.remove('open');$('#modal').setAttrib
 function renderSidebar(){const collapsed=Boolean(state.sidebarCollapsed),shell=$('#app-shell'),button=$('#sidebar-toggle');shell.classList.toggle('sidebar-collapsed',collapsed);button.setAttribute('aria-expanded',String(!collapsed));button.setAttribute('aria-label',collapsed?'展開選單':'收起選單');button.title=collapsed?'展開選單':'收起選單';$('#sidebar-session-date').textContent=`${state.sessionDateLabel}場次`;$('#sidebar-event-name').textContent=state.eventName;$('#sidebar-session-venue').textContent=`${state.sessionStart}–${state.sessionEnd} · ${state.venue}`}
 function toggleSidebar(){state.sidebarCollapsed=!state.sidebarCollapsed;renderSidebar();saveState()}
 function timeToMinutes(value){const [h,m]=String(value||'00:00').split(':').map(Number);return h*60+m}
-function currentSessionMinutes(){const now=new Date(),today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`,minutes=now.getHours()*60+now.getMinutes(),start=timeToMinutes(state.sessionStart),end=timeToMinutes(state.sessionEnd);if(today!==state.sessionDate)return start;return minutes>=start&&minutes<=end?minutes:start}
-function activeSession(){return currentSessionMinutes()<timeToMinutes('20:30')?{key:'B',label:'B 時段',courts:2,start:'18:00',end:'20:30'}:{key:'C',label:'C 時段',courts:3,start:'20:30',end:'22:30'}}
+function currentSessionMinutes(){if(state.sessionOverrideKey==='B')return timeToMinutes('18:00');if(state.sessionOverrideKey==='C')return timeToMinutes('20:30');const now=new Date(),today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`,minutes=now.getHours()*60+now.getMinutes(),start=timeToMinutes(state.sessionStart),end=timeToMinutes(state.sessionEnd);if(today!==state.sessionDate)return start;return minutes>=start&&minutes<=end?minutes:start}
+function sessionByKey(key){return key==='C'?{key:'C',label:'C 時段',courts:3,start:'20:30',end:'22:30'}:{key:'B',label:'B 時段',courts:2,start:'18:00',end:'20:30'}}
+function activeSession(){return sessionByKey(currentSessionMinutes()<timeToMinutes('20:30')?'B':'C')}
+function simulationSession(){return sessionByKey(state.simulationSessionKey)}
 function activeCourts(){return state.courts.filter(c=>c.id<=activeSession().courts)}
 function sessionRosterCount(key){return rosterPlayers().filter(p=>p.session===key||p.session==='B+C').length}
 function isAvailableNow(p){const now=currentSessionMinutes();return now>=timeToMinutes(p.availableFrom)&&now<timeToMinutes(p.availableUntil)}
+function isAvailableForSession(p,session){return (p.session===session.key||p.session==='B+C')&&timeToMinutes(p.availableFrom)<timeToMinutes(session.end)&&timeToMinutes(p.availableUntil)>timeToMinutes(session.start)}
 function gamesRemaining(p){return Math.max(0,(p.targetGames||state.gameLimit)-p.games)}
 function schedulePriority(p){const now=Math.max(currentSessionMinutes(),timeToMinutes(p.availableFrom)),remainingMinutes=Math.max(0,timeToMinutes(p.availableUntil)-now),possibleSlots=Math.max(1,Math.floor(remainingMinutes/18));return gamesRemaining(p)/possibleSlots}
 function availabilityText(p){const now=currentSessionMinutes(),from=timeToMinutes(p.availableFrom),until=timeToMinutes(p.availableUntil);if(now<from)return `${p.availableFrom} 到場`;if(now>=until)return `${p.availableUntil} 已離場`;return `${p.availableUntil} 前 · 尚缺 ${gamesRemaining(p)} 場`}
@@ -95,6 +100,7 @@ function getSuggestion(alternate=false){
 }
 function renderCourts(){
   const session=activeSession(),registered=sessionRosterCount(session.key),capacity=session.courts*8;$('#court-session-label').textContent=`${session.label} · ${session.courts} 面 · ${registered}/${capacity} 人`;
+  $('#court-session-switch').value=state.sessionOverrideKey;
   $('#session-date-badge').textContent=state.sessionDateLabel||state.sessionDate;
   $('#announcement').textContent=`B 時段 18:00–20:30 · C 時段 20:30–22:30 · ${state.venue} · 使用${state.shuttle}`;
   $('#court-grid').dataset.count=session.courts;
@@ -104,6 +110,7 @@ function renderCourts(){
   }).join('');
   $('#playing-count').textContent=allPlayers().filter(p=>p.status==='playing').length;$('#onsite-count').textContent=rosterPlayers().filter(p=>p.status!=='absent'&&isAvailableNow(p)).length;$('#finished-count').textContent=state.finished;
 }
+function switchCourtSession(key){if(!['auto','B','C'].includes(key))return;const select=$('#court-session-switch');if(state.courts.some(c=>c.status==='playing')){select.value=state.sessionOverrideKey;return toast('請先結束進行中的比賽，再切換時段')}state.sessionOverrideKey=key;state.suggestion=[];state.manualSelectedPlayerId=null;state.pool='waiting';getSuggestion();render();toast(key==='auto'?`已恢復依時間自動切換，目前為 ${activeSession().label}`:`已切換至 ${key} 時段試排`)}
 function renderPool(){
   const bossPool=state.pool==='boss',manual=state.arrangementMode==='manual'&&state.pool==='waiting',canDrag=manual&&!isTouchInterface(),nextUpIds=new Set(state.suggestion);
   const regularPool=rosterPlayers().filter(p=>p.status===state.pool&&(state.pool!=='waiting'||(isAvailableNow(p)&&!nextUpIds.has(p.id))));
@@ -282,22 +289,23 @@ function renderHistory(){
   $('#history-list').innerHTML=state.history.map(h=>`<div class="history-row"><span class="result">球場 ${h.court}${h.activity?`<small>${funModeName(h.activity)}</small>`:''}</span><div class="teams-side"><strong>${h.a.join(' / ')}</strong><small>${h.winner==='a'?'勝方':'對戰組合'}${h.deltaA!=null?` · 積分 ${h.deltaA>=0?'+':''}${h.deltaA}`:''}</small></div><div class="score">${h.score}${h.manualReview?`<small class="admin-review">團主：${safeHtml(h.manualReview)}</small>`:''}</div><div class="teams-side"><strong>${h.b.join(' / ')}</strong><small>${h.winner==='b'?'勝方':'對戰組合'}${h.deltaB!=null?` · 積分 ${h.deltaB>=0?'+':''}${h.deltaB}`:''}</small></div><time>${h.time}</time></div>`).join('');
   const board=[...state.players].sort((a,b)=>(b.wins-b.losses)-(a.wins-a.losses)).slice(0,6);$('#leaderboard').innerHTML=board.map((p,i)=>`<div class="leader-row"><span>${i+1}</span><strong>${p.name}</strong><strong>${p.wins} 勝</strong></div>`).join('')
 }
-function chooseBalancedFour(candidates){
+function chooseBalancedFour(candidates,sessionKey){
   const shortlist=[...candidates].sort((a,b)=>(a.simGames-b.simGames)||(b.simWait-a.simWait)||(a.id-b.id)).slice(0,Math.min(8,candidates.length));
   let best=null;
   for(let a=0;a<shortlist.length-3;a++)for(let b=a+1;b<shortlist.length-2;b++)for(let c=b+1;c<shortlist.length-1;c++)for(let d=c+1;d<shortlist.length;d++){
     const g=[shortlist[a],shortlist[b],shortlist[c],shortlist[d]],options=[[g[0],g[1],g[2],g[3]],[g[0],g[2],g[1],g[3]],[g[0],g[3],g[1],g[2]]];
-    options.forEach(o=>{if(!suggestionRespectsBindings(o))return;const diff=Math.abs(o[0].rating+o[1].rating-o[2].rating-o[3].rating),games=o.reduce((s,p)=>s+p.simGames,0),wait=o.reduce((s,p)=>s+p.simWait,0),score=diff+games*18-wait*1.5;if(!best||score<best.score)best={players:o,diff,score}})
+    options.forEach(o=>{if(!suggestionRespectsBindings(o,sessionKey))return;const diff=Math.abs(o[0].rating+o[1].rating-o[2].rating-o[3].rating),games=o.reduce((s,p)=>s+p.simGames,0),wait=o.reduce((s,p)=>s+p.simWait,0),score=diff+games*18-wait*1.5;if(!best||score<best.score)best={players:o,diff,score}})
   } return best;
 }
 function runSimulation(){
-  const session=activeSession(),virtual=rosterPlayers().filter(p=>p.status!=='absent'&&isAvailableNow(p)).map(p=>({...p,simGames:0,simWait:p.wait||0})),matches=[],duplicateErrors=[];
+  const session=simulationSession(),virtual=rosterPlayers().filter(p=>p.status!=='absent'&&isAvailableForSession(p,session)).map(p=>({...p,simGames:0,simWait:p.wait||0})),matches=[],duplicateErrors=[];
   for(let round=1;round<=30;round++){
-    virtual.forEach(p=>p.simWait+=4);const pick=chooseBalancedFour(virtual);if(!pick)break;const ids=pick.players.map(p=>p.id);if(new Set(ids).size!==4)duplicateErrors.push(round);
+    virtual.forEach(p=>p.simWait+=4);const pick=chooseBalancedFour(virtual,session.key);if(!pick)break;const ids=pick.players.map(p=>p.id);if(new Set(ids).size!==4)duplicateErrors.push(round);
     const a=pick.players.slice(0,2),b=pick.players.slice(2);pick.players.forEach(p=>{p.simGames++;p.simWait=0});
     matches.push({round,court:(round-1)%session.courts+1,a:a.map(p=>p.name),b:b.map(p=>p.name),aScore:a.reduce((s,p)=>s+p.rating,0),bScore:b.reduce((s,p)=>s+p.rating,0),diff:pick.diff});
   }
-  const counts=virtual.map(p=>p.simGames),diffs=matches.map(m=>m.diff),avgDiff=Math.round(diffs.reduce((s,n)=>s+n,0)/diffs.length),maxDiff=Math.max(...diffs),spread=Math.max(...counts)-Math.min(...counts),std=Math.sqrt(counts.reduce((s,n)=>s+Math.pow(n-counts.reduce((a,b)=>a+b,0)/counts.length,2),0)/counts.length),allPlayed=counts.every(n=>n>0);
+  if(virtual.length<4){state.simulation={session:session.key,matches:[],players:virtual.map(p=>({id:p.id,name:p.name,rating:p.rating,games:0})),metrics:{avgDiff:0,maxDiff:0,spread:0,std:0,total:0,players:virtual.length,courts:session.courts},tests:[{name:'可用球友人數',detail:`${session.label}至少需要 4 位可上場球友`,pass:false,value:`${virtual.length} 人`}],at:new Date().toISOString()};renderSimulation();saveState();return toast(`${session.label}可用球友不足 4 人，無法模擬`)}
+  const counts=virtual.map(p=>p.simGames),diffs=matches.map(m=>m.diff),avgDiff=Math.round(diffs.reduce((s,n)=>s+n,0)/Math.max(1,diffs.length)),maxDiff=Math.max(0,...diffs),spread=Math.max(...counts)-Math.min(...counts),std=Math.sqrt(counts.reduce((s,n)=>s+Math.pow(n-counts.reduce((a,b)=>a+b,0)/counts.length,2),0)/counts.length),allPlayed=counts.every(n=>n>0);
   const tests=[
     {name:'即時場地限制',detail:`${session.label} 僅使用已租用場地`,pass:matches.every(m=>m.court<=session.courts),value:`${session.courts} 面`},
     {name:'名單完整性',detail:'每場均為 4 位不重複球友',pass:duplicateErrors.length===0,value:duplicateErrors.length?'異常':'30 / 30'},
@@ -309,13 +317,15 @@ function runSimulation(){
   state.simulation={session:session.key,matches,players:virtual.map(p=>({id:p.id,name:p.name,rating:p.rating,games:p.simGames})),metrics:{avgDiff,maxDiff,spread,std:Number(std.toFixed(2)),total:matches.length,players:virtual.length,courts:session.courts},tests,at:new Date().toISOString()};renderSimulation();saveState();toast(`模擬完成：${tests.filter(t=>t.pass).length}/${tests.length} 項通過`)
 }
 function renderSimulation(){
+  const selector=$('#simulation-session');if(selector)selector.value=state.simulationSessionKey;
   const s=state.simulation;if(!s){$('#simulation-metrics').innerHTML='';return}
   const m=s.metrics,pass=s.tests.filter(t=>t.pass).length;$('#simulation-status').textContent=`已完成 ${m.total} 場排點測試`;$('#simulation-time').textContent=new Date(s.at).toLocaleString('zh-TW');
-  $('#simulation-metrics').innerHTML=[['時段場地',m.courts||activeSession().courts,'面',`${s.session||activeSession().key} 時段限制`],['測試場次',m.total,'場','完整跑完批次排點'],['參與球友',m.players,'人','排除未報到者'],['平均實力差',m.avgDiff,'分','越低代表越均衡'],['最大實力差',m.maxDiff,'分','檢查極端組合'],['場次標準差',m.std,'','越低代表越公平']].map(([label,value,unit,note],i)=>`<div class="metric-card ${i>2?'good':''}"><span>${label}</span><strong>${value}<small style="display:inline"> ${unit}</small></strong><small>${note}</small></div>`).join('');
+  $('#simulation-metrics').innerHTML=[['時段場地',m.courts||simulationSession().courts,'面',`${s.session||state.simulationSessionKey} 時段限制`],['測試場次',m.total,'場','完整跑完批次排點'],['參與球友',m.players,'人','排除未報到者'],['平均實力差',m.avgDiff,'分','越低代表越均衡'],['最大實力差',m.maxDiff,'分','檢查極端組合'],['場次標準差',m.std,'','越低代表越公平']].map(([label,value,unit,note],i)=>`<div class="metric-card ${i>2?'good':''}"><span>${label}</span><strong>${value}<small style="display:inline"> ${unit}</small></strong><small>${note}</small></div>`).join('');
   $('#test-score').textContent=`${pass} / ${s.tests.length} 通過`;$('#test-results').innerHTML=s.tests.map(t=>`<div class="test-row"><span class="test-icon ${t.pass?'':'fail'}">${t.pass?'✓':'!'}</span><span><strong>${t.name}</strong><small>${t.detail}</small></span><b>${t.value}</b></div>`).join('');
   const max=Math.max(...s.players.map(p=>p.games));$('#participation-chart').innerHTML=[...s.players].sort((a,b)=>b.games-a.games||b.rating-a.rating).map(p=>`<div class="chart-row"><span>${p.name}</span><div class="chart-bar"><i style="width:${p.games/max*100}%"></i></div><strong>${p.games}</strong></div>`).join('');
   $('#simulation-table').innerHTML=s.matches.map(x=>`<tr><td>#${String(x.round).padStart(2,'0')} · ${x.court||1} 場</td><td><b>${x.a.join(' / ')}</b></td><td>${x.aScore}</td><td><b>${x.b.join(' / ')}</b></td><td>${x.bScore}</td><td>${x.diff}</td><td><span class="quality-pill ${x.diff>=100?'warn':''}">${x.diff<60?'極均衡':x.diff<100?'均衡':'具挑戰'}</span></td></tr>`).join('')
 }
+function setSimulationSession(key){if(!['B','C'].includes(key))return;state.simulationSessionKey=key;state.simulation=null;runSimulation()}
 function matchReview(match){if(match.manualReview)return match.manualReview;const [a,b]=String(match.score||'0–0').split(/[–-]/).map(Number),margin=Math.abs(a-b);if(match.activity==='boss')return '勇者挑戰魔王，氣氛拉滿！';if(margin<=2)return '激戰到最後一分，精彩拉鋸！';if(margin>=10)return '火力全開，強勢拿下！';return '攻守有來有往，漂亮對決！'}
 function publicStats(){const scores=new Map();state.history.forEach(match=>{const [aScore,bScore]=String(match.score).split(/[–-]/).map(Number);[...match.a,...match.b].forEach(name=>{if(!scores.has(name))scores.set(name,{name,wins:0,pointsFor:0,pointsAgainst:0,diff:0})});match.a.forEach(name=>{const item=scores.get(name);item.pointsFor+=aScore;item.pointsAgainst+=bScore;if(match.winner==='a')item.wins++});match.b.forEach(name=>{const item=scores.get(name);item.pointsFor+=bScore;item.pointsAgainst+=aScore;if(match.winner==='b')item.wins++})});return [...scores.values()].map(item=>({...item,diff:item.pointsFor-item.pointsAgainst})).sort((a,b)=>b.wins-a.wins||b.diff-a.diff||b.pointsFor-a.pointsFor)}
 function buildPublicSnapshot(){const session=activeSession();return{updatedAt:Date.now(),event:{name:state.eventName,date:state.sessionDateLabel,venue:state.venue},session:{key:session.key,label:session.label,courts:session.courts},courts:activeCourts().map(c=>({id:c.id,status:c.status,minutes:c.start?Math.floor((Date.now()-c.start)/60000):0,activity:funModeName(c.funMode),matchType:c.matchType||matchTypeFor(c.players.map(player)),a:c.players.slice(0,2).map(id=>player(id)?.name).filter(Boolean),b:c.players.slice(2,4).map(id=>player(id)?.name).filter(Boolean)})),recent:state.history.slice(0,12).map(match=>({id:match.id,court:match.court,a:match.a,b:match.b,score:match.score,time:match.time,activity:funModeName(match.activity),matchType:match.matchType||'自由雙打',review:matchReview(match),customReview:Boolean(match.manualReview),deltaA:match.deltaA??null,deltaB:match.deltaB??null})),stats:publicStats(),roster:rosterPlayers().filter(p=>p.status!=='absent'&&isAvailableNow(p)).map(p=>({name:p.name,gender:p.gender,wishPoints:p.wishPoints})).sort((a,b)=>a.name.localeCompare(b.name,'zh-TW'))}}
@@ -363,11 +373,13 @@ $('#refresh-match').onclick=()=>{state.funMode='';const result=getSuggestion(tru
 $('#assign-match').onclick=()=>{const c=activeCourts().find(c=>c.status==='idle');c?assignToCourt(c.id):toast(`${activeSession().label}目前沒有空場`)};$('#auto-arrange').onclick=$('#assign-match').onclick;
 $('#add-player').onclick=showAddSessionPlayer;$('#add-member').onclick=()=>addPerson(false);$('#create-import-line').onclick=showLineNoteImport;$('#create-method-line').onclick=()=>setCreateMethod('line');$('#create-method-manual').onclick=()=>setCreateMethod('manual');$('#manual-member-search').oninput=renderManualRoster;$('#create-manual-session').onclick=createManualSession;$('#member-search').oninput=renderMembers;$('#level-filter').onchange=renderMembers;
 $('#payment-reminder-toggle').onclick=togglePaymentReminder;
+$('#court-session-switch').onchange=event=>switchCourtSession(event.target.value);
 $('#sound-toggle').onclick=()=>{state.sound=!state.sound;$('#sound-toggle').textContent=state.sound?'♬':'♩';toast(state.sound?'語音播報已開啟':'語音播報已靜音')};
 $('#fullscreen').onclick=()=>document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();
 $$('[data-step]').forEach(b=>b.onclick=()=>{state.gameLimit=Math.max(1,state.gameLimit+ +b.dataset.delta);$('#limit-setting').textContent=state.gameLimit});
 $('#save-settings').onclick=()=>toast('排點設定已儲存');$('#edit-suggestion').onclick=()=>setArrangementMode(state.arrangementMode==='manual'?'auto':'manual');
 $('#export-history').onclick=()=>{const rows=['場地,A隊,B隊,比分,時間',...state.history.map(h=>`${h.court},${h.a.join('/')},${h.b.join('/')},${h.score},${h.time}`)];const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+rows.join('\n')],{type:'text/csv'}));a.download='羽球對戰紀錄.csv';a.click();URL.revokeObjectURL(a.href)};
 $('#run-simulation').onclick=runSimulation;$('#export-simulation').onclick=()=>{if(!state.simulation)return toast('請先執行模擬測試');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(state.simulation,null,2)],{type:'application/json'}));a.download='排點模擬測試報告.json';a.click();URL.revokeObjectURL(a.href)};
-function bootConsole(){setInterval(renderElapsed,1000);setInterval(()=>{rosterPlayers().filter(p=>p.status==='waiting'&&isAvailableNow(p)).forEach(p=>p.wait++);renderCourts();renderSuggestion();renderPool();saveState();publishLiveState()},60000);setInterval(refreshWishes,5000);renderElapsed();render();refreshWishes();if(!state.simulation||state.simulation.session!==activeSession().key)runSimulation();activateView(new URLSearchParams(location.search).get('view')||'courts')}
+$('#simulation-session').onchange=event=>setSimulationSession(event.target.value);
+function bootConsole(){setInterval(renderElapsed,1000);setInterval(()=>{rosterPlayers().filter(p=>p.status==='waiting'&&isAvailableNow(p)).forEach(p=>p.wait++);renderCourts();renderSuggestion();renderPool();saveState();publishLiveState()},60000);setInterval(refreshWishes,5000);renderElapsed();render();refreshWishes();if(!state.simulation||state.simulation.session!==state.simulationSessionKey)runSimulation();activateView(new URLSearchParams(location.search).get('view')||'courts')}
 bootConsole();
