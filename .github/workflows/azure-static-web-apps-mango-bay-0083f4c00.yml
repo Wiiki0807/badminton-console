@@ -49,6 +49,7 @@ jobs:
           require_file index.html
           require_file staticwebapp.config.json
           require_file api/function_app.py
+          require_file api/shared/store.py
           require_file api/host.json
           require_file api/requirements.txt
           python -m py_compile api/function_app.py api/shared/store.py
