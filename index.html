@@ -3,8 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#102c2a" />
+  <meta name="theme-color" content="#0b2e5a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="羽球排點所" />
   <title>羽球排點所｜團隊場次管理</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/badminton-console.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/badminton-console.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700;800;900&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
@@ -34,7 +40,7 @@
     <main>
       <header class="topbar">
         <div><p class="eyebrow" id="eyebrow">SESSION CONTROL</p><h1 id="page-title">今晚，一起打場好球</h1></div>
-        <div class="header-actions"><button class="secondary live-board-button" id="open-live-board">◎ 球友看板</button><button class="icon-button" id="sound-toggle" title="語音播報">♬</button><button class="icon-button" id="fullscreen" title="全螢幕">⌷</button><button class="primary" id="auto-arrange">✦ 智慧排點</button></div>
+        <div class="header-actions"><button class="connectivity-status" id="connectivity-status" type="button" aria-label="網路與離線版狀態"><i></i><span>檢查連線</span></button><button class="secondary live-board-button" id="open-live-board">◎ 球友看板</button><button class="icon-button" id="sound-toggle" title="語音播報">♬</button><button class="icon-button" id="fullscreen" title="全螢幕">⌷</button><button class="primary" id="auto-arrange">✦ 智慧排點</button></div>
       </header>
 
       <section id="courts-view" class="view active">
