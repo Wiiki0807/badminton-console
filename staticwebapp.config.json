@@ -10,7 +10,7 @@
   ],
   "navigationFallback": {
     "rewrite": "/index.html",
-    "exclude": ["/api/*", "/*.{css,js,json,png,jpg,svg,ico,webp}"]
+    "exclude": ["/api/*", "/*.{css,js,json,png,jpg,svg,ico,webp,webmanifest}"]
   },
   "globalHeaders": {
     "X-Content-Type-Options": "nosniff",
