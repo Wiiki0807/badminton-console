@@ -82,9 +82,10 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="line-inference-smoke", methods=["POST"])
 def line_inference_smoke(req: func.HttpRequest) -> func.HttpResponse:
     """Exercise Azure -> Funnel -> Hub using a fixed prompt and no user-controlled content."""
-    authorization = req.headers.get("authorization", "")
-    scheme, separator, candidate = authorization.partition(" ")
-    if not separator or scheme.lower() != "bearer" or not inference_hub.token_matches(candidate.strip()):
+    # Static Web Apps reserves Authorization for its own authentication layer, so use a
+    # narrowly scoped custom header for this fixed diagnostic route.
+    candidate = req.headers.get("x-line-inference-smoke-token", "").strip()
+    if not inference_hub.token_matches(candidate):
         return json_response({"error": "unauthorized"}, 401)
     if not inference_hub.configured():
         return json_response({"error": "Inference Hub is not configured"}, 503)

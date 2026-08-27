@@ -88,8 +88,8 @@ Hub 逾時、斷線或回傳格式錯誤時，LINE bot 會自動退回原本的�
 若開發者沒有 Azure management-plane 權限，production workflow 會在 Functions 建置前，
 從 GitHub Secret `LINE_INFERENCE_HUB_TOKEN` 與同名前綴的 repository variables 產生後端
 專用設定檔。Git 只保存內容為 `{}` 的 placeholder，PR preview 不注入，Azure Application
-Settings 若存在仍具有最高優先權。受 Bearer token 保護的固定測試端點
-`POST /api/line-inference-smoke` 可驗證 Azure → Funnel → Hub，不接受自訂 prompt。
+Settings 若存在仍具有最高優先權。固定測試端點 `POST /api/line-inference-smoke` 使用
+`X-Line-Inference-Smoke-Token` 驗證，可測試 Azure → Funnel → Hub，且不接受自訂 prompt。
 
 LINE Developers Console 的 Webhook URL 設為：
 
