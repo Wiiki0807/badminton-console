@@ -22,32 +22,19 @@ jobs:
         with:
           submodules: true
           lfs: false
-      - name: Inject production Inference Hub settings
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      - name: Prepare deployable API artifact
         shell: bash
         env:
-          INFERENCE_HUB_URL: ${{ vars.LINE_INFERENCE_HUB_URL }}
-          INFERENCE_HUB_TOKEN: ${{ secrets.LINE_INFERENCE_HUB_TOKEN }}
-          INFERENCE_HUB_MODEL: ${{ vars.LINE_INFERENCE_HUB_MODEL }}
-          INFERENCE_HUB_TIMEOUT_SECONDS: ${{ vars.LINE_INFERENCE_HUB_TIMEOUT_SECONDS }}
+          INFERENCE_HUB_URL: ${{ github.ref == 'refs/heads/main' && vars.LINE_INFERENCE_HUB_URL || '' }}
+          INFERENCE_HUB_TOKEN: ${{ github.ref == 'refs/heads/main' && secrets.LINE_INFERENCE_HUB_TOKEN || '' }}
+          INFERENCE_HUB_MODEL: ${{ github.ref == 'refs/heads/main' && vars.LINE_INFERENCE_HUB_MODEL || '' }}
+          INFERENCE_HUB_TIMEOUT_SECONDS: ${{ github.ref == 'refs/heads/main' && vars.LINE_INFERENCE_HUB_TIMEOUT_SECONDS || '' }}
         run: |
           set -euo pipefail
-          test -n "$INFERENCE_HUB_URL"
-          test -n "$INFERENCE_HUB_TOKEN"
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          target = Path("api/shared/deployment_settings.json")
-          target.write_text(json.dumps({
-              "INFERENCE_HUB_URL": os.environ["INFERENCE_HUB_URL"],
-              "INFERENCE_HUB_TOKEN": os.environ["INFERENCE_HUB_TOKEN"],
-              "INFERENCE_HUB_MODEL": os.environ.get("INFERENCE_HUB_MODEL") or "openai/openai/gpt-4o-mini",
-              "INFERENCE_HUB_TIMEOUT_SECONDS": os.environ.get("INFERENCE_HUB_TIMEOUT_SECONDS") or "8",
-          }), encoding="utf-8")
-          PY
-          chmod 600 api/shared/deployment_settings.json
+          python api/inject_deployment_settings.py
+          python -m pip install --disable-pip-version-check \
+            --requirement api/requirements.txt \
+            --target api/.python_packages/lib/site-packages
       - name: Build And Deploy
         id: builddeploy
         uses: Azure/static-web-apps-deploy@v1
@@ -60,6 +47,7 @@ jobs:
           api_location: "api" # Api source code path - optional
           output_location: "" # Built app content directory - optional
           skip_app_build: true # Plain HTML/CSS/JS, no bundler to run
+          skip_api_build: true # The prior step creates the complete API artifact
           ###### End of Repository/Build Configurations ######
 
   close_pull_request_job:

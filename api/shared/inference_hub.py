@@ -49,6 +49,19 @@ def _timeout() -> float:
         return 8.0
 
 
+def configured() -> bool:
+    """Return whether the runtime artifact has both required Hub settings."""
+    return bool(_setting("INFERENCE_HUB_URL") and _setting("INFERENCE_HUB_TOKEN"))
+
+
+def token_matches(candidate: str) -> bool:
+    """Constant-time authorization check for the fixed production smoke probe."""
+    import hmac
+
+    expected = _setting("INFERENCE_HUB_TOKEN")
+    return bool(expected and candidate and hmac.compare_digest(candidate, expected))
+
+
 def generate_reply(text: str, state: dict[str, Any], display_name: str = "") -> str | None:
     """Return an LLM reply, or None when disabled/unavailable/invalid."""
     base_url = _setting("INFERENCE_HUB_URL").rstrip("/")

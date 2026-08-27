@@ -10,6 +10,7 @@ import azure.functions as func
 
 from shared import store
 from shared import line_bot
+from shared import inference_hub
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
@@ -76,6 +77,22 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
             # A 200 response prevents LINE from repeatedly redelivering a message whose
             # reply failed after the webhook itself was validated successfully.
     return json_response({"ok": True})
+
+
+@app.route(route="line-inference-smoke", methods=["POST"])
+def line_inference_smoke(req: func.HttpRequest) -> func.HttpResponse:
+    """Exercise Azure -> Funnel -> Hub using a fixed prompt and no user-controlled content."""
+    authorization = req.headers.get("authorization", "")
+    scheme, separator, candidate = authorization.partition(" ")
+    if not separator or scheme.lower() != "bearer" or not inference_hub.token_matches(candidate.strip()):
+        return json_response({"error": "unauthorized"}, 401)
+    if not inference_hub.configured():
+        return json_response({"error": "Inference Hub is not configured"}, 503)
+
+    reply = inference_hub.generate_reply("請只回答 AZURE_HUB_OK", {})
+    if not reply:
+        return json_response({"error": "Inference Hub request failed"}, 502)
+    return json_response({"ok": True, "reply": reply})
 
 
 @app.route(route="live-bundle", methods=["GET"])
