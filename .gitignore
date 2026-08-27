@@ -5,6 +5,7 @@ live-data/
 
 # Azure Functions local secrets
 api/local.settings.json
+api/shared/deployment_settings.json
 .venv/
 .python_packages/
 

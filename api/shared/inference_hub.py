@@ -4,11 +4,29 @@ from __future__ import annotations
 import json
 import logging
 import os
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 from urllib import error, request
 
 DEFAULT_MODEL = "openai/openai/gpt-4o-mini"
 MAX_REPLY_CHARS = 4500
+SETTINGS_FILE = Path(__file__).with_name("deployment_settings.json")
+
+
+@lru_cache(maxsize=1)
+def _deployment_settings() -> dict[str, str]:
+    """Read the production-only file generated from GitHub Secrets during deploy."""
+    try:
+        value = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {str(key): str(item) for key, item in value.items()} if isinstance(value, dict) else {}
+
+
+def _setting(name: str, default: str = "") -> str:
+    # Azure Application Settings remain the preferred override when access becomes available.
+    return os.environ.get(name, "").strip() or _deployment_settings().get(name, "").strip() or default
 
 
 def _public_state(state: dict[str, Any]) -> dict[str, Any]:
@@ -26,15 +44,15 @@ def _public_state(state: dict[str, Any]) -> dict[str, Any]:
 
 def _timeout() -> float:
     try:
-        return min(15.0, max(1.0, float(os.environ.get("INFERENCE_HUB_TIMEOUT_SECONDS", "8"))))
+        return min(15.0, max(1.0, float(_setting("INFERENCE_HUB_TIMEOUT_SECONDS", "8"))))
     except ValueError:
         return 8.0
 
 
 def generate_reply(text: str, state: dict[str, Any], display_name: str = "") -> str | None:
     """Return an LLM reply, or None when disabled/unavailable/invalid."""
-    base_url = os.environ.get("INFERENCE_HUB_URL", "").strip().rstrip("/")
-    token = os.environ.get("INFERENCE_HUB_TOKEN", "").strip()
+    base_url = _setting("INFERENCE_HUB_URL").rstrip("/")
+    token = _setting("INFERENCE_HUB_TOKEN")
     if not base_url or not token:
         return None
 
@@ -55,7 +73,7 @@ def generate_reply(text: str, state: dict[str, Any], display_name: str = "") -> 
         context_json = context_json[:24_000] + "…（資料已截斷）"
     payload = json.dumps(
         {
-            "model": os.environ.get("INFERENCE_HUB_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL,
+            "model": _setting("INFERENCE_HUB_MODEL", DEFAULT_MODEL),
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "system", "content": "可用資料：" + context_json},
