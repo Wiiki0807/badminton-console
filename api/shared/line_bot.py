@@ -9,6 +9,8 @@ import os
 from typing import Any
 from urllib import error, request
 
+from shared import inference_hub
+
 LINE_REPLY_URL = "https://api.line.me/v2/bot/message/reply"
 LINE_PROFILE_URL = "https://api.line.me/v2/bot/profile/{user_id}"
 
@@ -268,7 +270,8 @@ def answer(text: str, state: dict[str, Any], display_name: str = "") -> str:
     if normalized in {"看板", "即時看板", "連結"}:
         live_url = os.environ.get("LIVE_BOARD_URL", "").strip()
         return f"🏸 球友即時看板\n{live_url}" if live_url else "即時看板網址尚未設定。"
-    return "我目前還不懂這句話。\n\n" + help_message()
+    llm_reply = inference_hub.generate_reply(text, state, display_name)
+    return llm_reply or "我目前還不懂這句話。\n\n" + help_message()
 
 
 def get_display_name(user_id: str, access_token: str) -> str:
