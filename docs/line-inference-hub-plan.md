@@ -49,8 +49,9 @@ token rotation。此方案只建議用於短期驗證。
 
 目前 repository owner 提供的 deployment token 只能部署，不能修改 Azure Application
 Settings。Production Action 因此可從 GitHub Secret `LINE_INFERENCE_HUB_TOKEN` 與 repository
-variables 產生 `api/shared/deployment_settings.json`，隨後端 Function artifact 部署。檔案被
-Git 忽略，PR preview 不注入 secret，程式仍以 Azure environment variables 為最高優先。
+variables 覆寫 `api/shared/deployment_settings.json`，隨後端 Function artifact 部署。Git 只
+保存內容為 `{}` 的 placeholder，PR preview 不注入 secret，程式仍以 Azure environment
+variables 為最高優先。
 
 這是無 Azure 權限下的務實 PoC；token 輪替需更新 GitHub Secret 並重新執行 production
 deployment。若日後取得 Azure 管理權，應改回加密且可直接輪替的 Application Settings。

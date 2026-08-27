@@ -86,8 +86,9 @@ Hub 逾時、斷線或回傳格式錯誤時，LINE bot 會自動退回原本的�
 完成網路橋接；不要在尚未建立橋接前把私有 URL 填入 Azure 環境變數。
 
 若開發者沒有 Azure management-plane 權限，production workflow 也支援從 GitHub Secret
-`LINE_INFERENCE_HUB_TOKEN` 與同名前綴的 repository variables 產生後端專用設定檔。該檔案
-不進 Git、PR preview 不會產生，Azure Application Settings 若存在仍具有最高優先權。
+`LINE_INFERENCE_HUB_TOKEN` 與同名前綴的 repository variables 覆寫後端專用設定檔。Git
+只保存內容為 `{}` 的 placeholder，PR preview 不注入，Azure Application Settings 若存在
+仍具有最高優先權。
 
 LINE Developers Console 的 Webhook URL 設為：
 
