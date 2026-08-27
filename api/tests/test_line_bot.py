@@ -1,6 +1,9 @@
+import json
 import pathlib
 import sys
 import unittest
+from unittest import mock
+from urllib import error
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
@@ -49,6 +52,43 @@ class LineBotAnswerTests(unittest.TestCase):
     def test_self_query_reports_unmatched_profile(self):
         text = line_bot.answer("我的積分", STATE, "不同的LINE名稱")
         self.assertIn("尚未對應", text)
+
+    @mock.patch.dict("os.environ", {}, clear=True)
+    def test_unknown_query_keeps_help_fallback_when_llm_is_disabled(self):
+        text = line_bot.answer("今天適合練什麼？", STATE)
+        self.assertIn("我目前還不懂", text)
+
+    @mock.patch("shared.inference_hub.request.urlopen")
+    @mock.patch.dict(
+        "os.environ",
+        {"INFERENCE_HUB_URL": "http://hub.test:8790", "INFERENCE_HUB_TOKEN": "test-token"},
+        clear=True,
+    )
+    def test_unknown_query_uses_inference_hub(self, urlopen):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(
+            {"choices": [{"message": {"content": "建議先練高遠球。"}}]}
+        ).encode("utf-8")
+        urlopen.return_value = response
+
+        text = line_bot.answer("今天適合練什麼？", STATE, "阿力")
+
+        self.assertEqual("建議先練高遠球。", text)
+        sent = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertFalse(sent["stream"])
+        self.assertIn("阿力", sent["messages"][1]["content"])
+        self.assertEqual("Bearer test-token", urlopen.call_args.args[0].headers["Authorization"])
+
+    @mock.patch("shared.inference_hub.request.urlopen", side_effect=error.URLError("offline"))
+    @mock.patch.dict(
+        "os.environ",
+        {"INFERENCE_HUB_URL": "http://hub.test:8790", "INFERENCE_HUB_TOKEN": "test-token"},
+        clear=True,
+    )
+    def test_hub_failure_falls_back_to_help(self, _urlopen):
+        with self.assertLogs(level="ERROR"):
+            text = line_bot.answer("今天適合練什麼？", STATE)
+        self.assertIn("我目前還不懂", text)
 
 
 if __name__ == "__main__":

@@ -73,6 +73,17 @@ Azure Static Web Apps 的環境變數：
 - `LINE_CHANNEL_SECRET`：重新簽發後的 Channel secret
 - `LINE_CHANNEL_ACCESS_TOKEN`：Messaging API 的 Channel access token
 - `LIVE_BOARD_URL`：公開球友看板網址，例如 `https://你的網站/live.html`
+- `INFERENCE_HUB_URL`：OpenAI-compatible hub base URL；未設定時只使用既有指令解析
+- `INFERENCE_HUB_TOKEN`：hub 專用 Bearer token，不可與 LINE token 共用
+- `INFERENCE_HUB_MODEL`：選填，預設 `openai/openai/gpt-4o-mini`
+- `INFERENCE_HUB_TIMEOUT_SECONDS`：選填，預設 8 秒，允許範圍 1–15 秒
+
+已知指令仍優先使用原本的 deterministic parser；只有無法辨識的自然語句會呼叫 LLM。
+Hub 逾時、斷線或回傳格式錯誤時，LINE bot 會自動退回原本的指令說明。
+
+目前的 managed Function 不在 Tailscale tailnet 內，不能直接使用 `*.ts.net` 私有位址。
+正式啟用前請依 [LINE × Inference Hub 開發與部署計畫](docs/line-inference-hub-plan.md)
+完成網路橋接；不要在尚未建立橋接前把私有 URL 填入 Azure 環境變數。
 
 LINE Developers Console 的 Webhook URL 設為：
 
