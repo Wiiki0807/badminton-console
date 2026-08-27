@@ -1,6 +1,7 @@
 import json
 import pathlib
 import sys
+import tempfile
 import unittest
 from unittest import mock
 from urllib import error
@@ -8,6 +9,7 @@ from urllib import error
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from shared import line_bot
+from shared import inference_hub
 
 
 STATE = {
@@ -89,6 +91,31 @@ class LineBotAnswerTests(unittest.TestCase):
         with self.assertLogs(level="ERROR"):
             text = line_bot.answer("今天適合練什麼？", STATE)
         self.assertIn("我目前還不懂", text)
+
+    @mock.patch("shared.inference_hub.request.urlopen")
+    @mock.patch.dict("os.environ", {}, clear=True)
+    def test_deployment_settings_file_supplies_production_config(self, urlopen):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(
+            {"choices": [{"message": {"content": "artifact config works"}}]}
+        ).encode("utf-8")
+        urlopen.return_value = response
+        with tempfile.TemporaryDirectory() as directory:
+            settings = pathlib.Path(directory) / "deployment_settings.json"
+            settings.write_text(json.dumps({
+                "INFERENCE_HUB_URL": "https://funnel.test",
+                "INFERENCE_HUB_TOKEN": "artifact-token",
+            }), encoding="utf-8")
+            with mock.patch.object(inference_hub, "SETTINGS_FILE", settings):
+                inference_hub._deployment_settings.cache_clear()
+                try:
+                    text = line_bot.answer("自然語句", STATE)
+                finally:
+                    inference_hub._deployment_settings.cache_clear()
+        self.assertEqual("artifact config works", text)
+        req = urlopen.call_args.args[0]
+        self.assertEqual("https://funnel.test/chat/completions", req.full_url)
+        self.assertEqual("Bearer artifact-token", req.headers["Authorization"])
 
 
 if __name__ == "__main__":

@@ -45,12 +45,22 @@ Web Apps Standard 可連結 Container Apps 作為 `/api` backend。此方案維�
 8790 service 公開。至少要使用獨立長 token、request body 上限、rate limit、存取紀錄與
 token rotation。此方案只建議用於短期驗證。
 
+### 無 Azure 管理權限時的 PoC 設定
+
+目前 repository owner 提供的 deployment token 只能部署，不能修改 Azure Application
+Settings。Production Action 因此可從 GitHub Secret `LINE_INFERENCE_HUB_TOKEN` 與 repository
+variables 產生 `api/shared/deployment_settings.json`，隨後端 Function artifact 部署。檔案被
+Git 忽略，PR preview 不注入 secret，程式仍以 Azure environment variables 為最高優先。
+
+這是無 Azure 權限下的務實 PoC；token 輪替需更新 GitHub Secret 並重新執行 production
+deployment。若日後取得 Azure 管理權，應改回加密且可直接輪替的 Application Settings。
+
 ## 驗證紀錄（2026-08-28）
 
 - tailnet `GET /health`：HTTP 200，約 204 ms，回報 ready。
 - `POST /chat/completions`：HTTP 200、`application/json`，模型
   `openai/openai/gpt-4o-mini`，測試回覆約 1.28 秒。
-- `python -m unittest discover -s api/tests -v`：8 項全部通過。
+- `python -m unittest discover -s api/tests -v`：9 項全部通過。
 - 覆蓋範圍：舊 parser、個人戰績、下一組、無 LLM 設定 fallback、mock hub request 契約。
 
 ## 上線驗收
