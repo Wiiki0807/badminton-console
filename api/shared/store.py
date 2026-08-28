@@ -31,6 +31,7 @@ ALLOWED_REACTIONS = ("👍", "🔥", "🏸", "👏")
 WISH_COSTS = {"partner": 3, "opponent": 4, "mixed": 3, "boss": 5}
 EMPTY_STATE = {"courts": [], "recent": [], "stats": []}
 LINE_MEMORY_TABLE = "lineMemory"
+LINE_WEBHOOK_TABLE = "lineWebhookEvents"
 LINE_MEMORY_MAX_MESSAGES = 12
 LINE_MEMORY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 LINE_GENERATED_PREFIX = "line-generated/"
@@ -252,6 +253,24 @@ def clear_line_memory(conversation_id: str) -> None:
         rows = table.query_entities(f"PartitionKey eq '{partition}'", select=["PartitionKey", "RowKey"])
         for row in rows:
             table.delete_entity(row["PartitionKey"], row["RowKey"])
+
+
+def claim_line_webhook_event(event_id: str) -> bool:
+    """Atomically claim a LINE event so webhook redelivery cannot run it twice."""
+    bounded = str(event_id or "").strip()[:200]
+    if not bounded:
+        return True
+    entity = {
+        "PartitionKey": PARTITION,
+        "RowKey": hashlib.sha256(bounded.encode("utf-8")).hexdigest(),
+        "createdAt": _epoch(now_ms()),
+    }
+    try:
+        with _table(LINE_WEBHOOK_TABLE) as table:
+            table.create_entity(entity)
+        return True
+    except ResourceExistsError:
+        return False
 
 
 def upload_line_generated_image(raw: bytes, content_type: str) -> tuple[str, str]:
