@@ -7,15 +7,21 @@ import re
 import time
 from typing import Any
 from urllib import error, request
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlsplit
 
 GITHUB_REPO_PATTERN = re.compile(
     r"https?://(?:www\.)?github\.com/([A-Za-z0-9_.-]{1,100})/([A-Za-z0-9_.-]{1,100})(?:[/?#\s]|$)",
     re.IGNORECASE,
 )
+GITHUB_URL_PATTERN = re.compile(
+    r"https?://(?:www\.)?github\.com/[^\s<>\"']+",
+    re.IGNORECASE,
+)
+SAFE_GITHUB_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 API_ROOT = "https://api.github.com"
 MAX_API_BYTES = 2 * 1024 * 1024
 MAX_README_CHARS = 10_000
+MAX_FILE_CHARS = 60_000
 MAX_TREE_ENTRIES = 300
 MAX_CONTEXT_CHARS = 18_000
 CACHE_TTL_SECONDS = 600
@@ -37,6 +43,35 @@ def extract_repository(text: str) -> tuple[str, str] | None:
     if not repo:
         return None
     return owner, repo
+
+
+def extract_file(text: str) -> tuple[str, str, str, str] | None:
+    """Extract owner, repository, ref and path from a public GitHub blob URL."""
+    match = GITHUB_URL_PATTERN.search(str(text or ""))
+    if not match:
+        return None
+    url = match.group(0).rstrip(".,;:!?，。；：！？)]}")
+    parsed = urlsplit(url)
+    if (parsed.hostname or "").lower() not in {"github.com", "www.github.com"}:
+        return None
+    parts = [unquote(part) for part in parsed.path.split("/") if part]
+    if len(parts) < 5 or parts[2].lower() != "blob":
+        return None
+    owner, repo, ref = parts[:2] + [parts[3]]
+    if repo.lower().endswith(".git"):
+        repo = repo[:-4]
+    file_path = "/".join(parts[4:])
+    if (
+        not SAFE_GITHUB_NAME.fullmatch(owner)
+        or not SAFE_GITHUB_NAME.fullmatch(repo)
+        or not ref
+        or len(ref) > 200
+        or not file_path
+        or len(file_path) > 1000
+        or any(part in {".", ".."} for part in parts[4:])
+    ):
+        return None
+    return owner, repo, ref, file_path
 
 
 def _headers(accept: str = "application/vnd.github+json") -> dict[str, str]:
@@ -137,6 +172,45 @@ def fetch_repository_context(owner: str, repo: str) -> dict[str, str]:
     result = {
         "label": f"GitHub repository {full_name}",
         "url": f"https://github.com/{full_name}",
+        "content": context,
+    }
+    _CACHE[cache_key] = (now + CACHE_TTL_SECONDS, result)
+    return result
+
+
+def fetch_file_context(owner: str, repo: str, ref: str, file_path: str) -> dict[str, str]:
+    """Return bounded text content for one public file referenced by a GitHub blob URL."""
+    cache_key = f"file:{owner}/{repo}/{ref}/{file_path}".lower()
+    cached = _CACHE.get(cache_key)
+    now = time.monotonic()
+    if cached and cached[0] > now:
+        return cached[1]
+
+    safe_owner = quote(owner, safe="")
+    safe_repo = quote(repo, safe="")
+    safe_ref = quote(ref, safe="")
+    safe_path = quote(file_path, safe="/")
+    api_url = f"{API_ROOT}/repos/{safe_owner}/{safe_repo}/contents/{safe_path}?ref={safe_ref}"
+    content = _get_text(api_url)
+    if not content or "\x00" in content[:4096]:
+        raise GitHubReaderError("這個 GitHub 檔案不是可讀取的文字檔。")
+
+    truncated = len(content) > MAX_FILE_CHARS
+    content = content[:MAX_FILE_CHARS]
+    source_url = (
+        f"https://github.com/{quote(owner, safe='')}/{quote(repo, safe='')}/blob/"
+        f"{quote(ref, safe='')}/{quote(file_path, safe='/')}"
+    )
+    context = (
+        f"GitHub file: {owner}/{repo}/{file_path}\n"
+        f"Ref: {ref}\n"
+        f"Source URL: {source_url}\n"
+        f"Content truncated: {truncated}\n\n"
+        "File content:\n" + content
+    )
+    result = {
+        "label": f"GitHub file {owner}/{repo}/{file_path}",
+        "url": source_url,
         "content": context,
     }
     _CACHE[cache_key] = (now + CACHE_TTL_SECONDS, result)

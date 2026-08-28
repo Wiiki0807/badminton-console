@@ -421,6 +421,27 @@ class LineBotAnswerTests(unittest.TestCase):
         self.assertIsNone(github_reader.extract_repository("https://github.com.evil/owner/repo"))
         self.assertIsNone(github_reader.extract_repository("https://example.com/owner/repo"))
 
+    def test_github_blob_url_parser_extracts_file_target(self):
+        self.assertEqual(
+            ("Wiiki0807", "badminton-console", "main", "api/shared/line_bot.py"),
+            github_reader.extract_file(
+                "https://github.com/Wiiki0807/badminton-console/blob/main/api/shared/line_bot.py 這個檔案做什麼？"
+            ),
+        )
+        self.assertIsNone(github_reader.extract_file("https://github.com/owner/repo/tree/main/api"))
+        self.assertIsNone(github_reader.extract_file("https://github.com.evil/owner/repo/blob/main/a.py"))
+
+    @mock.patch("shared.github_reader._get_text", return_value="def webhook():\n    return 'ok'\n")
+    def test_github_reader_fetches_bounded_file_content(self, get_text):
+        github_reader._CACHE.clear()
+
+        result = github_reader.fetch_file_context("owner", "repo", "main", "api/app.py")
+
+        self.assertIn("def webhook()", result["content"])
+        self.assertIn("Content truncated: False", result["content"])
+        self.assertEqual("https://github.com/owner/repo/blob/main/api/app.py", result["url"])
+        self.assertIn("/repos/owner/repo/contents/api/app.py?ref=main", get_text.call_args.args[0])
+
     @mock.patch("shared.github_reader._get_text", return_value="# README\n這是系統說明")
     @mock.patch("shared.github_reader._get_json")
     def test_github_reader_builds_bounded_repository_context(self, get_json, _get_text):
@@ -459,6 +480,23 @@ class LineBotAnswerTests(unittest.TestCase):
         self.assertEqual("讀取後的架構摘要", result)
         fetch_context.assert_called_once_with("owner", "repo")
         self.assertEqual("README and tree", generate_reply.call_args.kwargs["reference_text"])
+
+    @mock.patch("shared.line_bot.inference_hub.generate_reply", return_value="這是 webhook 處理程式")
+    @mock.patch("shared.line_bot.github_reader.fetch_file_context")
+    def test_github_blob_url_uses_file_reader_before_repository_reader(self, fetch_file, generate_reply):
+        fetch_file.return_value = {
+            "label": "GitHub file owner/repo/api/app.py",
+            "url": "https://github.com/owner/repo/blob/main/api/app.py",
+            "content": "def webhook(): pass",
+        }
+
+        result = line_bot.answer(
+            "https://github.com/owner/repo/blob/main/api/app.py 這個檔案做什麼？", STATE
+        )
+
+        self.assertEqual("這是 webhook 處理程式", result)
+        fetch_file.assert_called_once_with("owner", "repo", "main", "api/app.py")
+        self.assertEqual("def webhook(): pass", generate_reply.call_args.kwargs["reference_text"])
 
     @mock.patch("shared.pdf_summary.PdfReader")
     def test_pdf_extraction_is_page_and_character_bounded(self, pdf_reader):
