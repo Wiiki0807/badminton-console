@@ -2,3 +2,4 @@ azure-functions
 azure-data-tables==12.5.0
 azure-storage-blob==12.22.0
 Pillow>=11.3.0,<13
+pypdf>=5,<7

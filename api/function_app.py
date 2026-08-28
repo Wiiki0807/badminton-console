@@ -11,6 +11,7 @@ import azure.functions as func
 from shared import store
 from shared import line_bot
 from shared import inference_hub
+from shared import pdf_summary
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
@@ -40,6 +41,44 @@ def read_body(req: func.HttpRequest) -> dict:
     return body
 
 
+def summarize_line_pdf_message(message: dict, access_token: str) -> str:
+    """Download, extract and summarize one bounded LINE PDF file message."""
+    file_name = str(message.get("fileName", "document.pdf"))[:120]
+    if not file_name.lower().endswith(".pdf"):
+        return "目前只支援 PDF 摘要，請傳送副檔名為 .pdf 的檔案。"
+    try:
+        declared_size = int(message.get("fileSize") or 0)
+    except (TypeError, ValueError):
+        declared_size = 0
+    try:
+        raw_pdf = line_bot.get_message_pdf(
+            str(message.get("id", "")), access_token, declared_size
+        )
+        extracted = pdf_summary.extract_pdf_text(raw_pdf)
+        request_text = (
+            "請以繁體中文摘要這份 PDF，包含：文件主旨、重要重點、主要結論，"
+            "以及文件中明確出現的待辦或決策。不可捏造文件未提供的資訊。"
+        )
+        text = inference_hub.generate_reply(
+            request_text,
+            {},
+            document_text=extracted["text"],
+            document_name=file_name,
+        ) or "PDF 已解析，但 AI 摘要服務暫時無法回覆，請稍後再試。"
+        if extracted["truncated"]:
+            text = (
+                text[:4300]
+                + f"\n\n註：此 PDF 共 {extracted['page_count']} 頁，"
+                + f"本次摘要使用前 {extracted['pages_processed']} 頁或文字上限內的內容。"
+            )
+        return text
+    except pdf_summary.PdfSummaryError as exc:
+        return str(exc)
+    except (ValueError, RuntimeError):
+        logging.exception("LINE PDF download failed")
+        return "PDF 下載失敗或檔案過大，請確認檔案小於 10 MB 後再試。"
+
+
 @app.route(route="line-webhook", methods=["POST"])
 def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
     """Receive RocketAI webhook events and reply with the current public match state."""
@@ -63,7 +102,7 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
         message = event.get("message") or {}
         reply_token = event.get("replyToken", "")
         message_type = message.get("type")
-        if event.get("type") != "message" or message_type not in {"text", "image"} or not reply_token:
+        if event.get("type") != "message" or message_type not in {"text", "image", "file"} or not reply_token:
             continue
         try:
             source = event.get("source") or {}
@@ -81,6 +120,16 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
             except Exception:
                 logging.exception("LINE memory read failed; continuing without history")
                 history = []
+            if message_type == "file":
+                file_name = str(message.get("fileName", "document.pdf"))[:120]
+                text = summarize_line_pdf_message(message, access_token)
+                line_bot.reply(reply_token, text, access_token)
+                try:
+                    store.add_line_memory(conversation_id, "user", f"[使用者傳送 PDF：{file_name}]")
+                    store.add_line_memory(conversation_id, "assistant", text)
+                except Exception:
+                    logging.exception("LINE memory write failed; PDF reply was still delivered")
+                continue
             image_data_url = ""
             memory_text = incoming_text
             if message_type == "image":
