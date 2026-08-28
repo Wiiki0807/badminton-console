@@ -14,6 +14,9 @@ from zoneinfo import ZoneInfo
 
 DEFAULT_MODEL = "openai/openai/gpt-4o-mini"
 MAX_REPLY_CHARS = 4500
+MAX_TOOL_CALLS = 4
+TOOL_CALL_LIMITS = {"get_current_datetime": 1, "get_current_weather": 1, "web_search": 1}
+TERMINAL_TOOL_NAMES = {"get_current_weather", "web_search"}
 SETTINGS_FILE = Path(__file__).with_name("deployment_settings.json")
 TOOL_SPECS = {
     "get_current_datetime": {
@@ -279,12 +282,12 @@ def generate_reply(
     if _setting("TAVILY_API_KEY"):
         tool_names.append("web_search")
 
-    def call_model(current_messages: list[dict[str, Any]]) -> dict[str, Any]:
+    def call_model(current_messages: list[dict[str, Any]], enabled_tools: list[str]) -> dict[str, Any]:
         payload = json.dumps(
             {
                 "model": _setting("INFERENCE_HUB_MODEL", DEFAULT_MODEL),
                 "messages": current_messages,
-                "tool_names": tool_names,
+                "tool_names": enabled_tools,
                 "stream": False,
                 "temperature": 0.2,
                 "max_tokens": 700,
@@ -305,17 +308,31 @@ def generate_reply(
         return message
 
     try:
-        message = call_model(messages)
-        tool_calls = message.get("tool_calls") or []
-        if tool_calls:
+        remaining_tool_calls = MAX_TOOL_CALLS
+        tool_call_counts: dict[str, int] = {}
+        enabled_tools = list(tool_names)
+        while True:
+            message = call_model(messages, enabled_tools)
+            tool_calls = message.get("tool_calls") or []
+            if not tool_calls:
+                content = message.get("content")
+                reply = str(content or "").strip()
+                return reply[:MAX_REPLY_CHARS] if reply else None
+            if remaining_tool_calls <= 0:
+                logging.warning("LINE assistant exceeded the bounded tool-call budget")
+                return None
+
+            accepted_calls = tool_calls[:remaining_tool_calls]
             messages.append({
                 "role": "assistant",
                 "content": str(message.get("content") or ""),
-                "tool_calls": tool_calls[:4],
+                "tool_calls": accepted_calls,
             })
-            for call in tool_calls[:4]:
+            round_tool_names = []
+            for call in accepted_calls:
                 function = call.get("function") or {}
                 name = str(function.get("name", ""))
+                round_tool_names.append(name)
                 try:
                     arguments = json.loads(function.get("arguments") or "{}")
                     if not isinstance(arguments, dict):
@@ -329,10 +346,21 @@ def generate_reply(
                     "tool_call_id": str(call.get("id", ""))[:120],
                     "content": json.dumps(result, ensure_ascii=False)[:12_000],
                 })
-            message = call_model(messages)
-        content = message.get("content")
-        reply = str(content or "").strip()
-        return reply[:MAX_REPLY_CHARS] if reply else None
+                tool_call_counts[name] = tool_call_counts.get(name, 0) + 1
+            remaining_tool_calls -= len(accepted_calls)
+            if any(name in TERMINAL_TOOL_NAMES for name in round_tool_names):
+                enabled_tools = []
+            else:
+                enabled_tools = [
+                    name for name in tool_names
+                    if tool_call_counts.get(name, 0) < TOOL_CALL_LIMITS.get(name, 1)
+                    and remaining_tool_calls > 0
+                ]
+            if not enabled_tools:
+                messages.append({
+                    "role": "system",
+                    "content": "工具查詢已完成。請只根據已有工具結果直接回答，不要再要求工具。",
+                })
     except (error.HTTPError, error.URLError, TimeoutError, OSError, ValueError, KeyError, json.JSONDecodeError):
         logging.exception("Inference Hub request failed; using deterministic LINE fallback")
         return None
