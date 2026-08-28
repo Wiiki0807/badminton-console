@@ -28,6 +28,16 @@ MAX_TOOL_CALLS = 4
 IMAGE_EDIT_MODEL = "openai/openai/gpt-image-2"
 MAX_IMAGE_EDIT_INPUT_BYTES = 6 * 1024 * 1024
 MAX_IMAGE_EDIT_OUTPUT_BYTES = 12 * 1024 * 1024
+COMPLEX_REQUEST_PATTERN = re.compile(
+    r"(?:分析|比較|規劃|設計|撰寫|改寫|程式|程式碼|除錯|debug|架構|摘要|翻譯|推理|證明|"
+    r"為什麼|原因|如何|怎麼|請詳細|深入|新聞|搜尋|查詢|天氣|日期|時間|策略|建議方案)",
+    re.IGNORECASE,
+)
+SIMPLE_CHAT_PATTERN = re.compile(
+    r"^(?:嗨|嘿|哈囉|哈啰|hello|hi|早安|午安|晚安|你好|在嗎|在幹嘛|你在幹嘛|"
+    r"你在做什麼|最近好嗎|謝謝|感謝|掰掰|再見|晚安|你是誰|陪我聊天)[呀啊嗎呢喔哦！!？?～~ ]*$",
+    re.IGNORECASE,
+)
 TOOL_CALL_LIMITS = {"get_current_datetime": 1, "get_current_weather": 1, "web_search": 1}
 TERMINAL_TOOL_NAMES = {"get_current_weather", "web_search"}
 SETTINGS_FILE = Path(__file__).with_name("deployment_settings.json")
@@ -128,7 +138,7 @@ def _public_state(state: dict[str, Any]) -> dict[str, Any]:
 
 def _timeout() -> float:
     try:
-        return min(15.0, max(1.0, float(_setting("INFERENCE_HUB_TIMEOUT_SECONDS", "8"))))
+        return min(30.0, max(1.0, float(_setting("INFERENCE_HUB_TIMEOUT_SECONDS", "8"))))
     except ValueError:
         return 8.0
 
@@ -136,6 +146,25 @@ def _timeout() -> float:
 def configured() -> bool:
     """Return whether the runtime artifact has both required Hub settings."""
     return bool(_setting("INFERENCE_HUB_URL") and _setting("INFERENCE_HUB_TOKEN"))
+
+
+def select_chat_model(
+    text: str,
+    *,
+    has_image: bool = False,
+    has_document: bool = False,
+    has_reference: bool = False,
+) -> str:
+    """Keep everyday chat fast while reserving the configured model for harder work."""
+    advanced = _setting("INFERENCE_HUB_MODEL", DEFAULT_MODEL)
+    bounded = " ".join(str(text or "").strip().split())[:1000]
+    if has_image or has_document or has_reference:
+        return advanced
+    if SIMPLE_CHAT_PATTERN.fullmatch(bounded):
+        return DEFAULT_MODEL
+    if len(bounded) > 120 or COMPLEX_REQUEST_PATTERN.search(bounded):
+        return advanced
+    return DEFAULT_MODEL
 
 
 def token_matches(candidate: str) -> bool:
@@ -533,11 +562,17 @@ def generate_reply(
     if document_text or reference_text:
         tool_names = []
     response_token_limit = 900 if reference_text else 700
+    selected_model = select_chat_model(
+        text,
+        has_image=bool(image_data_url),
+        has_document=bool(document_text),
+        has_reference=bool(reference_text),
+    )
 
     def call_model(current_messages: list[dict[str, Any]], enabled_tools: list[str]) -> dict[str, Any]:
         payload = json.dumps(
             {
-                "model": _setting("INFERENCE_HUB_MODEL", DEFAULT_MODEL),
+                "model": selected_model,
                 "messages": current_messages,
                 "tool_names": enabled_tools,
                 "stream": False,
