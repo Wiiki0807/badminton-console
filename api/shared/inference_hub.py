@@ -40,7 +40,7 @@ TOOL_SPECS = {
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "搜尋網頁以回答最新、可能變動或需要來源的問題。必須在答案附上結果網址。",
+            "description": "使用 Tavily 搜尋網頁，以回答最新、可能變動或需要來源的問題。必須在答案附上結果網址。",
             "parameters": {
                 "type": "object",
                 "properties": {"query": {"type": "string", "description": "最多 400 字的搜尋詞"}},
@@ -116,8 +116,19 @@ def token_matches(candidate: str) -> bool:
     return bool(expected and candidate and hmac.compare_digest(candidate, expected))
 
 
-def _json_request(url: str, *, headers: dict[str, str] | None = None, timeout: float = 8) -> dict[str, Any]:
-    req = request.Request(url, headers=headers or {})
+def _json_request(
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    timeout: float = 8,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    request_headers = dict(headers or {})
+    data = None
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request_headers["Content-Type"] = "application/json"
+    req = request.Request(url, data=data, headers=request_headers, method="POST" if data else "GET")
     with request.urlopen(req, timeout=timeout) as response:
         value = json.loads(response.read().decode("utf-8"))
     if not isinstance(value, dict):
@@ -175,23 +186,30 @@ def _execute_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             "wind_speed_kmh": current.get("wind_speed_10m"),
         }
     if name == "web_search":
-        api_key = _setting("BRAVE_SEARCH_API_KEY")
+        api_key = _setting("TAVILY_API_KEY")
         if not api_key:
             return {"success": False, "error": "網頁搜尋尚未設定 API key"}
         query = str(arguments.get("query", "")).strip()[:400]
         if not query:
             return {"success": False, "error": "缺少搜尋詞"}
         result = _json_request(
-            "https://api.search.brave.com/res/v1/web/search?"
-            + urlencode({"q": query, "count": 5, "country": "TW", "search_lang": "zh-hant"}),
-            headers={"Accept": "application/json", "X-Subscription-Token": api_key},
+            "https://api.tavily.com/search",
+            headers={"Accept": "application/json", "Authorization": f"Bearer {api_key}"},
+            payload={
+                "query": query,
+                "search_depth": "basic",
+                "max_results": 5,
+                "include_answer": False,
+                "include_raw_content": False,
+                "include_images": False,
+            },
         )
-        rows = (result.get("web") or {}).get("results") or []
+        rows = result.get("results") or []
         return {
             "success": True,
             "query": query,
             "results": [
-                {"title": row.get("title"), "url": row.get("url"), "description": row.get("description")}
+                {"title": row.get("title"), "url": row.get("url"), "description": row.get("content")}
                 for row in rows[:5]
             ],
         }
@@ -258,7 +276,7 @@ def generate_reply(
         {"role": "user", "content": user_content},
     ]
     tool_names = ["get_current_datetime", "get_current_weather"]
-    if _setting("BRAVE_SEARCH_API_KEY"):
+    if _setting("TAVILY_API_KEY"):
         tool_names.append("web_search")
 
     def call_model(current_messages: list[dict[str, Any]]) -> dict[str, Any]:
