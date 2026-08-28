@@ -76,7 +76,8 @@ Azure Static Web Apps 的環境變數：
 - `INFERENCE_HUB_URL`：OpenAI-compatible hub base URL；未設定時只使用既有指令解析
 - `INFERENCE_HUB_TOKEN`：hub 專用 Bearer token，不可與 LINE token 共用
 - `INFERENCE_HUB_MODEL`：選填，預設 `openai/openai/gpt-4o-mini`
-- `INFERENCE_HUB_TIMEOUT_SECONDS`：選填，預設 8 秒，允許範圍 1–15 秒
+- `INFERENCE_HUB_TIMEOUT_SECONDS`：選填，預設 8 秒，允許範圍 1–30 秒
+- `LINE_REMINDER_DISPATCH_TOKEN`：選填的獨立排程密鑰；未設定時由 Hub token 單向衍生
 
 已知羽球指令仍優先使用原本的 deterministic parser；其他自然語句會交給多用途 LLM，
 可進行一般問答、寫作、翻譯、摘要、規劃、腦力激盪與技術協助。Hub 逾時、斷線或
@@ -87,6 +88,27 @@ LINE assistant 也支援單張 JPEG/PNG/WebP（最多 6 MB）的 VLM 圖片理�
 最近 12 則對話記憶。識別碼會先雜湊，模型使用的記憶視窗為 7 天；輸入「清除記憶」
 可立即刪除該對話的記憶。網頁搜尋使用 Tavily basic search 與 GitHub Secret
 `TAVILY_API_KEY`；未設定時不會把搜尋工具提供給模型。
+
+圖片原始檔會以「聊天室＋傳送者」隔離後私存在 Azure Blob 24 小時；一般 VLM 呼叫使用
+最長邊 1280px 的 JPEG，只有明確 OCR 或圖片小字／印章追問才重新讀取原圖並視需要裁切。
+因此群組中不同使用者的最近圖片不會互相覆蓋或被追問誤用。
+
+提醒功能支援「明天下午三點提醒我吃藥」、「查看提醒」、「取消提醒 ABC123」與
+「修改提醒 ABC123 明天下午四點」。4o-mini 只負責將自然語言解析成結構化指令；提醒資料
+由 Azure Table `lineReminders` 保存。到期通知使用 LINE Push API，排程端呼叫受
+`X-Line-Reminder-Token` 保護的 `POST /api/line-reminders-dispatch`。在 24 小時開機的
+`nv-ws-tommy` 上，以系統管理員 PowerShell 安裝每分鐘工作：
+
+```powershell
+.\scripts\install-line-reminder-task.ps1 `
+  -Endpoint "https://mango-bay-0083f4c00.7.azurestaticapps.net/api/line-reminders-dispatch" `
+  -HubEnvFile "<nv_infer_hub 的 .env 完整路徑>"
+```
+
+安裝程式只把單向 HMAC 衍生值寫入排程，不會把原始 Hub token 放進排程參數；也可選擇另外設定
+GitHub Secret `LINE_REMINDER_DISPATCH_TOKEN`，並改以 `-Token` 傳入相同值。排程使用 SYSTEM
+身份且可在無人登入時運作。LINE Push 目標固定為提出提醒的 user ID；若提醒
+是在群組建立，使用者仍須先將 RocketAI 加為好友，才能可靠收到私人通知。
 
 群組與多人聊天室採智慧喚醒：Tag 官方帳號，或以「小羽／RocketAI」開頭時一定回覆；
 未點名的純文字會先由 `openai/openai/gpt-4o-mini` 在無工具、低 token 上限下分類，只有

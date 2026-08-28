@@ -1,5 +1,7 @@
 import json
 import base64
+import hashlib
+import hmac
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 import pathlib
@@ -18,6 +20,7 @@ from shared import inference_hub
 from shared import store
 from shared import pdf_summary
 from shared import github_reader
+from shared import reminders
 import function_app
 
 
@@ -38,6 +41,60 @@ STATE = {
 
 
 class LineBotAnswerTests(unittest.TestCase):
+    @mock.patch.dict("os.environ", {"INFERENCE_HUB_TOKEN": "hub-secret"}, clear=True)
+    def test_reminder_dispatch_token_is_domain_separated_from_hub_token(self):
+        derived = hmac.new(
+            b"hub-secret", b"rocketai-line-reminder-dispatch-v1", hashlib.sha256
+        ).hexdigest()
+        self.assertTrue(inference_hub.reminder_dispatch_token_matches(derived))
+        self.assertFalse(inference_hub.reminder_dispatch_token_matches("hub-secret"))
+
+    @mock.patch("shared.store.list_line_reminders", return_value=[])
+    @mock.patch("shared.store._table")
+    @mock.patch("shared.store.now_ms", return_value=1_900_000_000_000)
+    def test_reminder_store_creates_uuid_row_and_int64_time(self, _now, table_factory, _list):
+        table = mock.MagicMock()
+        table_factory.return_value.__enter__.return_value = table
+
+        row = store.create_line_reminder("U123", "U123", "吃藥", 1_900_000_060_000)
+
+        entity = table.create_entity.call_args.args[0]
+        self.assertEqual(36, len(entity["RowKey"]))
+        self.assertEqual("U123", entity["targetId"])
+        self.assertEqual(1_900_000_060_000, int(entity["dueAt"].value))
+        self.assertEqual(entity["RowKey"][:6].upper(), row["shortId"])
+
+    @mock.patch("shared.store._table")
+    @mock.patch("shared.store.now_ms", return_value=1_900_000_000_000)
+    def test_due_reminder_claim_uses_int64_filter_and_optimistic_lease(self, _now, table_factory):
+        class Entity(dict):
+            metadata = {"etag": "etag-value"}
+
+        entity = Entity({
+            "PartitionKey": "p", "RowKey": "11111111-1111-1111-1111-111111111111",
+            "title": "吃藥", "targetId": "U123", "dueAt": 1_899_999_999_000,
+            "status": "pending", "leaseUntil": 0, "attempts": 0,
+        })
+        table = mock.MagicMock()
+        table.query_entities.return_value = [entity]
+        table_factory.return_value.__enter__.return_value = table
+
+        rows = store.claim_due_line_reminders(limit=20)
+
+        query = table.query_entities.call_args.args[0]
+        self.assertIn("dueAt le 1900000000000L", query)
+        self.assertEqual(1, rows[0]["attempts"])
+        self.assertEqual("etag-value", table.update_entity.call_args.kwargs["etag"])
+
+    def test_group_recent_image_context_is_scoped_to_sender(self):
+        first = {"type": "group", "groupId": "G123", "userId": "U1"}
+        second = {"type": "group", "groupId": "G123", "userId": "U2"}
+        self.assertEqual("group:G123:user:U1", line_bot.image_context_id(first))
+        self.assertNotEqual(line_bot.image_context_id(first), line_bot.image_context_id(second))
+        self.assertEqual(
+            "user:U1", line_bot.image_context_id({"type": "user", "userId": "U1"})
+        )
+
     @mock.patch("shared.store._recent_image_blob")
     def test_recent_image_is_private_bounded_and_available_for_followups(self, recent_blob):
         blob = mock.MagicMock()
@@ -153,6 +210,135 @@ class LineBotAnswerTests(unittest.TestCase):
             {"type": "group", "groupId": "G123", "userId": "U123"}, "access-token"
         ))
         self.assertEqual(1, urlopen.call_count)
+
+    @mock.patch("shared.line_bot.request.urlopen")
+    def test_line_push_uses_proactive_endpoint_and_retry_key(self, urlopen):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b"{}"
+        urlopen.return_value = response
+
+        line_bot.push_text("U123", "提醒內容", "access-token", retry_key="a" * 32)
+
+        sent = urlopen.call_args.args[0]
+        self.assertEqual("https://api.line.me/v2/bot/message/push", sent.full_url)
+        self.assertEqual("a" * 32, sent.headers["X-line-retry-key"])
+        self.assertEqual("U123", json.loads(sent.data)["to"])
+
+    @mock.patch("shared.inference_hub.request.urlopen")
+    @mock.patch.dict(
+        "os.environ",
+        {"INFERENCE_HUB_URL": "https://hub.test", "INFERENCE_HUB_TOKEN": "token"},
+        clear=True,
+    )
+    def test_reminder_parser_uses_4o_mini_and_validates_future_time(self, urlopen):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({
+            "choices": [{"message": {"content": json.dumps({
+                "action": "create", "title": "吃藥", "reminder_id": "",
+                "new_title": "", "due_at": "2030-08-30T15:00:00+08:00",
+                "needs_clarification": False, "clarification": "", "confidence": 0.99,
+            })}}]
+        }).encode()
+        urlopen.return_value = response
+
+        result = inference_hub.parse_reminder_command("2030年8月30日下午3點提醒我吃藥")
+
+        self.assertEqual("create", result["action"])
+        self.assertEqual("吃藥", result["title"])
+        self.assertGreater(result["due_at_ms"], 0)
+        sent = json.loads(urlopen.call_args.args[0].data.decode())
+        self.assertEqual("openai/openai/gpt-4o-mini", sent["model"])
+        self.assertEqual([], sent["tool_names"])
+        self.assertEqual(0, sent["temperature"])
+
+    @mock.patch("shared.inference_hub.request.urlopen")
+    @mock.patch.dict(
+        "os.environ",
+        {"INFERENCE_HUB_URL": "https://hub.test", "INFERENCE_HUB_TOKEN": "token"},
+        clear=True,
+    )
+    def test_reminder_parser_accepts_minimal_cancel_json(self, urlopen):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({
+            "choices": [{"message": {"content":
+                '{"action":"cancel","reminder_id":"ABC123"}'
+            }}]
+        }).encode()
+        urlopen.return_value = response
+
+        result = inference_hub.parse_reminder_command("取消提醒 ABC123")
+
+        self.assertEqual("cancel", result["action"])
+        self.assertEqual("ABC123", result["reminder_id"])
+        self.assertFalse(result["needs_clarification"])
+        urlopen.assert_not_called()
+
+    @mock.patch("shared.inference_hub.request.urlopen")
+    @mock.patch.dict(
+        "os.environ",
+        {"INFERENCE_HUB_URL": "https://hub.test", "INFERENCE_HUB_TOKEN": "token"},
+        clear=True,
+    )
+    def test_reminder_parser_rejects_model_invented_time(self, urlopen):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({
+            "choices": [{"message": {"content": json.dumps({
+                "action": "create", "title": "吃藥",
+                "due_at": "2030-08-30T15:00:00+08:00", "confidence": 0.99,
+            })}}]
+        }).encode()
+        urlopen.return_value = response
+
+        result = inference_hub.parse_reminder_command("明天提醒我吃藥")
+
+        self.assertTrue(result["needs_clarification"])
+        self.assertIn("明確時間", result["clarification"])
+
+    @mock.patch("shared.reminders.store.create_line_reminder")
+    @mock.patch("shared.reminders.inference_hub.parse_reminder_command")
+    def test_reminder_create_confirms_absolute_time(self, parse, create):
+        parse.return_value = {
+            "action": "create", "title": "吃藥", "due_at_ms": 1914303600000,
+            "needs_clarification": False,
+        }
+        create.return_value = {
+            "shortId": "ABC123", "title": "吃藥", "dueAt": 1914303600000,
+        }
+
+        text = reminders.handle("提醒我吃藥", "U123")
+
+        self.assertIn("ABC123", text)
+        self.assertIn("吃藥", text)
+        create.assert_called_once_with("U123", "U123", "吃藥", 1914303600000)
+
+    @mock.patch("function_app.store.finish_line_reminder")
+    @mock.patch("function_app.line_bot.push_text")
+    @mock.patch("function_app.store.claim_due_line_reminders")
+    @mock.patch("function_app.inference_hub.reminder_dispatch_token_matches", return_value=True)
+    @mock.patch.dict("os.environ", {"LINE_CHANNEL_ACCESS_TOKEN": "line-token"}, clear=True)
+    def test_reminder_dispatch_claims_pushes_and_marks_sent(
+        self, _auth, claim, push, finish
+    ):
+        row = {
+            "id": "a" * 32, "shortId": "AAAAAA", "title": "吃藥",
+            "targetId": "U123", "PartitionKey": "partition", "RowKey": "a" * 32,
+        }
+        claim.return_value = [row]
+        req = function_app.func.HttpRequest(
+            method="POST",
+            url="https://example.test/api/line-reminders-dispatch",
+            headers={"x-line-reminder-token": "secret"},
+            body=b"",
+        )
+
+        response = function_app.line_reminders_dispatch(req)
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(1, json.loads(response.get_body())["sent"])
+        push.assert_called_once_with(
+            "U123", "⏰ 小羽提醒你\n\n吃藥", "line-token", retry_key="a" * 32
+        )
+        finish.assert_called_once_with(row, sent=True)
 
     def test_next_image_comic_request_is_one_shot(self):
         history = [{"role": "user", "content": "小羽，把下一張照片轉成漫畫風格"}]

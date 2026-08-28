@@ -17,6 +17,7 @@ from shared import inference_hub
 from shared import github_reader
 
 LINE_REPLY_URL = "https://api.line.me/v2/bot/message/reply"
+LINE_PUSH_URL = "https://api.line.me/v2/bot/message/push"
 LINE_LOADING_URL = "https://api.line.me/v2/bot/chat/loading/start"
 LINE_PROFILE_URL = "https://api.line.me/v2/bot/profile/{user_id}"
 LINE_CONTENT_URL = "https://api-data.line.me/v2/bot/message/{message_id}/content"
@@ -266,6 +267,7 @@ def help_message() -> str:
         "• 如需完整 OCR，先說「下一張圖片請 OCR」再傳圖\n"
         "• 傳送 10 MB 以下的文字型 PDF 自動產生摘要\n"
         "• 查詢現在日期、時間與即時天氣\n"
+        "• 設定、查看、修改與取消私人提醒\n"
         "• 保留最近對話；輸入「清除記憶」可刪除\n\n"
         "羽球活動指令：\n"
         "• 今日場次\n"
@@ -296,6 +298,15 @@ def conversation_id(source: dict[str, Any]) -> str:
         if value:
             return f"{prefix}:{value}"
     return ""
+
+
+def image_context_id(source: dict[str, Any]) -> str:
+    """Keep recent pixels private to their sender, including inside shared group memory."""
+    conversation = conversation_id(source)
+    user_id = str(source.get("userId", "")).strip()
+    if is_group_source(source) and user_id:
+        return f"{conversation}:user:{user_id}"
+    return conversation
 
 
 def show_loading_animation(
@@ -445,6 +456,10 @@ def recent_image_question_prompt(text: str) -> str:
     )
 
 
+def image_question_needs_detail(text: str) -> bool:
+    return bool(IMAGE_TEXT_DETAIL_PATTERN.search(str(text or "")[:1000]))
+
+
 def focus_recent_image_region(image_data_url: str, question: str) -> str:
     """Crop and enlarge a clearly requested red-stamp region for more reliable OCR."""
     if not RED_STAMP_PATTERN.search(str(question or "")):
@@ -460,13 +475,16 @@ def focus_recent_image_region(image_data_url: str, question: str) -> str:
         with Image.open(BytesIO(raw)) as source:
             image = ImageOps.exif_transpose(source).convert("RGB")
         width, height = image.size
-        pixels = image.load()
-        left, top, right, bottom = width, height, -1, -1
+        detector = image.copy()
+        detector.thumbnail((1280, 1280), Image.Resampling.LANCZOS)
+        detect_width, detect_height = detector.size
+        pixels = detector.load()
+        left, top, right, bottom = detect_width, detect_height, -1, -1
         matches = 0
-        # Recent LINE images are already bounded to 1280 px, so a direct scan
-        # remains small while preserving individual stamp strokes.
-        for y in range(height):
-            for x in range(width):
+        # Detect on a bounded copy, then map the box back to the privately kept
+        # original so OCR still sees the source pixels without a multi-megapixel scan.
+        for y in range(detect_height):
+            for x in range(detect_width):
                 red, green, blue = pixels[x, y]
                 if red >= 115 and red >= green + 28 and red >= blue + 28:
                     left, top = min(left, x), min(top, y)
@@ -475,8 +493,15 @@ def focus_recent_image_region(image_data_url: str, question: str) -> str:
         if matches < 30 or right <= left or bottom <= top:
             return image_data_url
         span_x, span_y = right - left + 1, bottom - top + 1
-        if span_x * span_y > width * height * 0.45:
+        if span_x * span_y > detect_width * detect_height * 0.45:
             return image_data_url
+        scale_x = width / detect_width
+        scale_y = height / detect_height
+        left = round(left * scale_x)
+        right = round((right + 1) * scale_x) - 1
+        top = round(top * scale_y)
+        bottom = round((bottom + 1) * scale_y) - 1
+        span_x, span_y = right - left + 1, bottom - top + 1
         # Include surrounding printed text that may be crossed by the stamp.
         pad_x = max(30, span_x)
         pad_y = max(30, span_y)
@@ -582,6 +607,13 @@ def answer(
 
 
 def get_message_image(message_id: str, access_token: str) -> str:
+    """Backward-compatible helper returning the bandwidth-bounded VLM image."""
+    _, prepared = get_message_image_pair(message_id, access_token)
+    return prepared
+
+
+def get_message_image_pair(message_id: str, access_token: str) -> tuple[str, str]:
+    """Return both original pixels for private retention and a bounded VLM copy."""
     if not message_id:
         raise ValueError("missing LINE message id")
     req = request.Request(
@@ -598,8 +630,25 @@ def get_message_image(message_id: str, access_token: str) -> str:
         raise RuntimeError("LINE image download failed") from exc
     if not raw or len(raw) > MAX_LINE_IMAGE_BYTES:
         raise ValueError("LINE image is empty or too large")
-    raw, content_type = prepare_image_for_vlm(raw, content_type)
-    return f"data:{content_type};base64,{base64.b64encode(raw).decode('ascii')}"
+    original = f"data:{content_type};base64,{base64.b64encode(raw).decode('ascii')}"
+    prepared_raw, prepared_type = prepare_image_for_vlm(raw, content_type)
+    prepared = f"data:{prepared_type};base64,{base64.b64encode(prepared_raw).decode('ascii')}"
+    return original, prepared
+
+
+def prepare_data_url_for_vlm(image_data_url: str) -> str:
+    match = re.fullmatch(
+        r"data:(image/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=\r\n]+)",
+        image_data_url or "",
+    )
+    if not match:
+        raise ValueError("invalid image data URL")
+    try:
+        raw = base64.b64decode(match.group(2), validate=True)
+    except ValueError as exc:
+        raise ValueError("invalid image base64") from exc
+    prepared, content_type = prepare_image_for_vlm(raw, match.group(1))
+    return f"data:{content_type};base64,{base64.b64encode(prepared).decode('ascii')}"
 
 
 def get_message_pdf(message_id: str, access_token: str, declared_size: int = 0) -> bytes:
@@ -751,6 +800,31 @@ def reply(reply_token: str, text: str, access_token: str) -> None:
     except error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"LINE reply failed ({exc.code}): {body}") from exc
+
+
+def push_text(
+    target_id: str, text: str, access_token: str, *, retry_key: str = ""
+) -> None:
+    """Proactively deliver a reminder without relying on an expired reply token."""
+    if not target_id or not text.strip():
+        raise ValueError("missing LINE push target or text")
+    payload = json.dumps(
+        {"to": target_id, "messages": [{"type": "text", "text": text[:5000]}]},
+        ensure_ascii=False,
+    ).encode("utf-8")
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+    }
+    if retry_key:
+        headers["X-Line-Retry-Key"] = retry_key[:36]
+    req = request.Request(LINE_PUSH_URL, data=payload, method="POST", headers=headers)
+    try:
+        with request.urlopen(req, timeout=8) as response:
+            response.read()
+    except error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"LINE push failed ({exc.code}): {body}") from exc
 
 
 def reply_image(

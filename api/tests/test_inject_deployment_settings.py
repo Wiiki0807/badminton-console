@@ -16,6 +16,7 @@ class InjectDeploymentSettingsTests(unittest.TestCase):
             "INFERENCE_HUB_TOKEN": "secret-value",
             "INFERENCE_HUB_MODEL": "test-model",
             "INFERENCE_HUB_TIMEOUT_SECONDS": "7",
+            "LINE_REMINDER_DISPATCH_TOKEN": "r" * 40,
         }
         with tempfile.TemporaryDirectory() as directory:
             target = pathlib.Path(directory) / "deployment_settings.json"

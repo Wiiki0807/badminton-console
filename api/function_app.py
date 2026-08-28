@@ -12,6 +12,7 @@ from shared import store
 from shared import line_bot
 from shared import inference_hub
 from shared import pdf_summary
+from shared import reminders
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
@@ -114,6 +115,7 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                 # Deduplication is protective rather than required for availability.
                 logging.exception("LINE webhook deduplication unavailable; processing event")
             conversation_id = line_bot.conversation_id(source)
+            image_context_id = line_bot.image_context_id(source)
             incoming_text = str(message.get("text", "")) if message_type == "text" else ""
             try:
                 history = store.list_line_memory(conversation_id)
@@ -133,6 +135,23 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                 line_bot.show_loading_animation(source, access_token, loading_seconds=25)
             except Exception:
                 logging.exception("LINE loading animation failed; continuing without it")
+            if message_type == "text" and inference_hub.looks_like_reminder_request(incoming_text):
+                try:
+                    text = reminders.handle(
+                        incoming_text,
+                        str(source.get("userId", "")),
+                        history=[] if line_bot.is_group_source(source) else history,
+                    ) or "目前無法辨識提醒指令。"
+                except ValueError as exc:
+                    logging.warning("LINE reminder command rejected: %s", exc)
+                    text = "提醒內容或時間無效；每位使用者最多可保留 50 筆未完成提醒。"
+                line_bot.reply(reply_token, text, access_token)
+                try:
+                    store.add_line_memory(conversation_id, "user", incoming_text)
+                    store.add_line_memory(conversation_id, "assistant", text)
+                except Exception:
+                    logging.exception("LINE memory write failed; reminder reply was delivered")
+                continue
             display_name = ""
             if line_bot.needs_profile(incoming_text):
                 display_name = line_bot.get_display_name(str(source.get("userId", "")), access_token)
@@ -150,7 +169,7 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
             memory_text = incoming_text
             if message_type == "text" and line_bot.references_recent_image(incoming_text, history):
                 try:
-                    image_data_url = store.load_line_recent_image(conversation_id)
+                    image_data_url = store.load_line_recent_image(image_context_id)
                 except Exception:
                     logging.exception("LINE recent image read failed")
                     image_data_url = ""
@@ -158,6 +177,8 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                     image_data_url = line_bot.focus_recent_image_region(
                         image_data_url, incoming_text
                     )
+                    if not line_bot.image_question_needs_detail(incoming_text):
+                        image_data_url = line_bot.prepare_data_url_for_vlm(image_data_url)
                     incoming_text = line_bot.recent_image_question_prompt(incoming_text)
                 else:
                     text = "最近一張圖片已不存在或超過 24 小時，請重新傳送圖片。"
@@ -169,9 +190,11 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                         logging.exception("LINE memory write failed; missing-image reply was delivered")
                     continue
             if message_type == "image":
-                image_data_url = line_bot.get_message_image(str(message.get("id", "")), access_token)
+                original_image_data_url, image_data_url = line_bot.get_message_image_pair(
+                    str(message.get("id", "")), access_token
+                )
                 try:
-                    store.save_line_recent_image(conversation_id, image_data_url)
+                    store.save_line_recent_image(image_context_id, original_image_data_url)
                 except Exception:
                     logging.exception("LINE recent image save failed; continuing with current image")
                 edit_request = line_bot.history_image_edit_request(history)
@@ -205,6 +228,7 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                 ocr_requested = line_bot.history_requests_image_ocr(history)
                 incoming_text = line_bot.image_prompt(history)
                 if ocr_requested:
+                    image_data_url = original_image_data_url
                     memory_text = "[使用者傳送一張圖片，明確要求 OCR]"
                 else:
                     memory_text = "[使用者傳送一張圖片，要求一般圖片理解]"
@@ -226,6 +250,41 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
             # A 200 response prevents LINE from repeatedly redelivering a message whose
             # reply failed after the webhook itself was validated successfully.
     return json_response({"ok": True})
+
+
+@app.route(route="line-reminders-dispatch", methods=["POST"])
+def line_reminders_dispatch(req: func.HttpRequest) -> func.HttpResponse:
+    """Lease due reminders and deliver idempotent LINE Push messages."""
+    candidate = req.headers.get("x-line-reminder-token", "").strip()
+    if not inference_hub.reminder_dispatch_token_matches(candidate):
+        return json_response({"error": "unauthorized"}, 401)
+    access_token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    if not access_token:
+        return json_response({"error": "LINE 尚未完成設定"}, 503)
+    try:
+        claimed = store.claim_due_line_reminders(limit=20)
+    except Exception:
+        logging.exception("LINE reminder claim failed")
+        return json_response({"error": "reminder storage unavailable"}, 503)
+
+    sent = 0
+    failed = 0
+    for row in claimed:
+        try:
+            line_bot.push_text(
+                row["targetId"], reminders.notification_text(row), access_token,
+                retry_key=row["id"],
+            )
+            store.finish_line_reminder(row, sent=True)
+            sent += 1
+        except Exception as exc:
+            logging.exception("LINE reminder push failed id=%s", row.get("shortId"))
+            try:
+                store.finish_line_reminder(row, sent=False, error_message=str(exc))
+            except Exception:
+                logging.exception("LINE reminder failure state update failed")
+            failed += 1
+    return json_response({"ok": True, "claimed": len(claimed), "sent": sent, "failed": failed})
 
 
 @app.route(route="line-inference-smoke", methods=["POST"])
