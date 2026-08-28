@@ -33,6 +33,9 @@ def inject_settings(env: Mapping[str, str] = os.environ, target: Path = TARGET) 
     reminder_token = env.get("LINE_REMINDER_DISPATCH_TOKEN", "").strip()
     if reminder_token:
         settings["LINE_REMINDER_DISPATCH_TOKEN"] = reminder_token
+    briefing_location = env.get("DAILY_BRIEFING_LOCATION", "").strip()
+    if briefing_location:
+        settings["DAILY_BRIEFING_LOCATION"] = briefing_location
     target.write_text(json.dumps(settings, ensure_ascii=False), encoding="utf-8")
     print("Inference Hub deployment settings injected")
     return True

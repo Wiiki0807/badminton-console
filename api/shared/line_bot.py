@@ -781,8 +781,20 @@ def get_display_name(user_id: str, access_token: str) -> str:
 
 
 def reply(reply_token: str, text: str, access_token: str) -> None:
+    reply_texts(reply_token, [text], access_token)
+
+
+def reply_texts(reply_token: str, texts: list[str], access_token: str) -> None:
+    """Reply with up to five separate LINE text bubbles using one reply token."""
+    messages = [
+        {"type": "text", "text": str(text).strip()[:5000]}
+        for text in texts[:5]
+        if str(text).strip()
+    ]
+    if not messages:
+        raise ValueError("missing LINE reply text")
     payload = json.dumps(
-        {"replyToken": reply_token, "messages": [{"type": "text", "text": text[:5000]}]},
+        {"replyToken": reply_token, "messages": messages},
         ensure_ascii=False,
     ).encode("utf-8")
     req = request.Request(
