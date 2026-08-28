@@ -116,6 +116,106 @@ class LineBotAnswerTests(unittest.TestCase):
         self.assertEqual("call_datetime", tool_message["tool_call_id"])
         self.assertTrue(json.loads(tool_message["content"])["success"])
 
+    @mock.patch("shared.inference_hub._execute_tool")
+    @mock.patch("shared.inference_hub.request.urlopen")
+    @mock.patch.dict(
+        "os.environ",
+        {
+            "INFERENCE_HUB_URL": "http://hub.test:8790",
+            "INFERENCE_HUB_TOKEN": "test-token",
+            "TAVILY_API_KEY": "tvly-test-key",
+        },
+        clear=True,
+    )
+    def test_sequential_datetime_then_search_tool_calls_are_completed(self, urlopen, execute_tool):
+        def response(message):
+            value = mock.MagicMock()
+            value.__enter__.return_value.read.return_value = json.dumps(
+                {"choices": [{"message": message}]}
+            ).encode("utf-8")
+            return value
+
+        urlopen.side_effect = [
+            response({
+                "content": None,
+                "tool_calls": [{
+                    "id": "call_datetime",
+                    "type": "function",
+                    "function": {"name": "get_current_datetime", "arguments": "{}"},
+                }],
+            }),
+            response({
+                "content": None,
+                "tool_calls": [{
+                    "id": "call_search",
+                    "type": "function",
+                    "function": {"name": "web_search", "arguments": '{"query":"NVIDIA 最新新聞"}'},
+                }],
+            }),
+            response({"content": "這是今天的 NVIDIA 新聞與來源。"}),
+        ]
+        execute_tool.side_effect = [
+            {"success": True, "date": "2026-08-28"},
+            {"success": True, "results": [{"title": "來源", "url": "https://example.com"}]},
+        ]
+
+        text = inference_hub.generate_reply("搜尋今天 NVIDIA 的最新新聞", {})
+
+        self.assertEqual("這是今天的 NVIDIA 新聞與來源。", text)
+        self.assertEqual(3, urlopen.call_count)
+        self.assertEqual(
+            [mock.call("get_current_datetime", {}), mock.call("web_search", {"query": "NVIDIA 最新新聞"})],
+            execute_tool.call_args_list,
+        )
+        final_request = json.loads(urlopen.call_args_list[2].args[0].data.decode("utf-8"))
+        self.assertEqual(2, len([item for item in final_request["messages"] if item["role"] == "tool"]))
+
+    @mock.patch("shared.inference_hub._execute_tool")
+    @mock.patch("shared.inference_hub.request.urlopen")
+    @mock.patch.dict(
+        "os.environ",
+        {
+            "INFERENCE_HUB_URL": "http://hub.test:8790",
+            "INFERENCE_HUB_TOKEN": "test-token",
+            "TAVILY_API_KEY": "tvly-test-key",
+        },
+        clear=True,
+    )
+    def test_terminal_search_forces_a_final_answer_without_more_tools(self, urlopen, execute_tool):
+        def response(message):
+            value = mock.MagicMock()
+            value.__enter__.return_value.read.return_value = json.dumps(
+                {"choices": [{"message": message}]}
+            ).encode("utf-8")
+            return value
+
+        def tool_call(call_id, name, arguments):
+            return response({
+                "content": None,
+                "tool_calls": [{
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": name, "arguments": json.dumps(arguments)},
+                }],
+            })
+
+        urlopen.side_effect = [
+            tool_call("call_datetime", "get_current_datetime", {}),
+            tool_call("call_search_1", "web_search", {"query": "NVIDIA news"}),
+            response({"content": "根據搜尋結果整理的新聞。"}),
+        ]
+        execute_tool.side_effect = [
+            {"success": True, "date": "2026-08-28"},
+            {"success": True, "results": []},
+        ]
+
+        text = inference_hub.generate_reply("搜尋今天 NVIDIA 的最新新聞", {})
+
+        self.assertEqual("根據搜尋結果整理的新聞。", text)
+        final_request = json.loads(urlopen.call_args_list[2].args[0].data.decode("utf-8"))
+        self.assertEqual([], final_request["tool_names"])
+        self.assertIn("不要再要求工具", final_request["messages"][-1]["content"])
+
     @mock.patch("shared.inference_hub.request.urlopen")
     @mock.patch.dict(
         "os.environ",
