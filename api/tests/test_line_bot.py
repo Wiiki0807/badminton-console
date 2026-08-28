@@ -82,6 +82,8 @@ class LineBotAnswerTests(unittest.TestCase):
         sent = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
         self.assertFalse(sent["stream"])
         self.assertIn("多用途繁體中文 AI 助手", sent["messages"][0]["content"])
+        self.assertIn("別名是「小羽」", sent["messages"][0]["content"])
+        self.assertIn("主人是「湯米吳」", sent["messages"][0]["content"])
         self.assertIn("不要把回答限制在羽球", sent["messages"][0]["content"])
         self.assertIn("阿力", sent["messages"][1]["content"])
         self.assertEqual("Bearer test-token", urlopen.call_args.args[0].headers["Authorization"])
@@ -305,6 +307,27 @@ class LineBotAnswerTests(unittest.TestCase):
 
         self.assertNotIn("圖片第一場對戰的人名呢", prompt)
         self.assertIn("描述這張圖片的主要內容", prompt)
+
+    def test_unrelated_image_does_not_inherit_a_plain_followup_question(self):
+        prompt = line_bot.image_prompt([
+            {"role": "user", "content": "[使用者傳送一張圖片，要求一般圖片理解]"},
+            {"role": "assistant", "content": "第一場的人名是……"},
+            {"role": "user", "content": "左邊第一場呢？"},
+            {"role": "assistant", "content": "左邊第一場是……"},
+        ])
+
+        self.assertNotIn("左邊第一場", prompt)
+        self.assertIn("描述這張圖片的主要內容", prompt)
+
+    def test_explicit_next_image_request_is_carried_after_an_old_image(self):
+        prompt = line_bot.image_prompt([
+            {"role": "user", "content": "[使用者傳送一張圖片，要求一般圖片理解]"},
+            {"role": "assistant", "content": "圖片描述"},
+            {"role": "user", "content": "下一張圖片請告訴我箱子裡有什麼"},
+            {"role": "assistant", "content": "請傳下一張圖片"},
+        ])
+
+        self.assertIn("箱子裡有什麼", prompt)
 
     @mock.patch("shared.inference_hub._json_request")
     @mock.patch.dict("os.environ", {"TAVILY_API_KEY": "tvly-test-key"}, clear=True)
