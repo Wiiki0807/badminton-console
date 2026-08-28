@@ -62,16 +62,44 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
     for event in body.get("events") or []:
         message = event.get("message") or {}
         reply_token = event.get("replyToken", "")
-        if event.get("type") != "message" or message.get("type") != "text" or not reply_token:
+        message_type = message.get("type")
+        if event.get("type") != "message" or message_type not in {"text", "image"} or not reply_token:
             continue
         try:
-            incoming_text = str(message.get("text", ""))
             source = event.get("source") or {}
+            conversation_id = line_bot.conversation_id(source)
+            incoming_text = str(message.get("text", "")) if message_type == "text" else ""
+            if message_type == "text" and line_bot.is_memory_reset(incoming_text):
+                store.clear_line_memory(conversation_id)
+                line_bot.reply(reply_token, "已清除這個對話最近的記憶。", access_token)
+                continue
             display_name = ""
             if line_bot.needs_profile(incoming_text):
                 display_name = line_bot.get_display_name(str(source.get("userId", "")), access_token)
-            text = line_bot.answer(incoming_text, store.read_state(), display_name)
+            try:
+                history = store.list_line_memory(conversation_id)
+            except Exception:
+                logging.exception("LINE memory read failed; continuing without history")
+                history = []
+            image_data_url = ""
+            memory_text = incoming_text
+            if message_type == "image":
+                image_data_url = line_bot.get_message_image(str(message.get("id", "")), access_token)
+                incoming_text = "請描述這張圖片並辨識其中可讀文字；若包含文字，請完整整理（OCR）。"
+                memory_text = "[使用者傳送一張圖片，要求描述與 OCR]"
+            text = line_bot.answer(
+                incoming_text,
+                store.read_state(),
+                display_name,
+                history=history,
+                image_data_url=image_data_url,
+            )
             line_bot.reply(reply_token, text, access_token)
+            try:
+                store.add_line_memory(conversation_id, "user", memory_text)
+                store.add_line_memory(conversation_id, "assistant", text)
+            except Exception:
+                logging.exception("LINE memory write failed; reply was still delivered")
         except Exception:
             logging.exception("LINE message processing failed")
             # A 200 response prevents LINE from repeatedly redelivering a message whose

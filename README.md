@@ -82,6 +82,12 @@ Azure Static Web Apps 的環境變數：
 可進行一般問答、寫作、翻譯、摘要、規劃、腦力激盪與技術協助。Hub 逾時、斷線或
 回傳格式錯誤時，LINE bot 會自動退回原本的指令說明。
 
+LINE assistant 也支援單張 JPEG/PNG/WebP（最多 6 MB）的 VLM 圖片理解與 OCR、
+`Asia/Taipei` 日期時間、Open-Meteo 即時天氣，以及按 LINE user/group/room 分隔的
+最近 12 則對話記憶。識別碼會先雜湊，模型使用的記憶視窗為 7 天；輸入「清除記憶」
+可立即刪除該對話的記憶。網頁搜尋使用選填的 GitHub Secret
+`BRAVE_SEARCH_API_KEY`；未設定時不會把搜尋工具提供給模型。
+
 目前的 managed Function 不在 Tailscale tailnet 內，不能直接使用 `*.ts.net` 私有位址。
 正式啟用前請依 [LINE × Inference Hub 開發與部署計畫](docs/line-inference-hub-plan.md)
 完成網路橋接；不要在尚未建立橋接前把私有 URL 填入 Azure 環境變數。

@@ -13,6 +13,8 @@ from shared import inference_hub
 
 LINE_REPLY_URL = "https://api.line.me/v2/bot/message/reply"
 LINE_PROFILE_URL = "https://api.line.me/v2/bot/profile/{user_id}"
+LINE_CONTENT_URL = "https://api-data.line.me/v2/bot/message/{message_id}/content"
+MAX_LINE_IMAGE_BYTES = 6 * 1024 * 1024
 
 
 def verify_signature(raw_body: bytes, signature: str, channel_secret: str) -> bool:
@@ -211,8 +213,13 @@ def _next_match_summary(state: dict[str, Any]) -> str:
 
 def help_message() -> str:
     return (
-        "我是 RocketAI 🏸\n"
-        "可查詢目前羽球活動：\n"
+        "我是 RocketAI，多用途 AI 助手 🏸\n"
+        "可以一般問答、寫作、翻譯、摘要、規劃與技術協助。\n"
+        "也支援：\n"
+        "• 傳送圖片進行內容理解與 OCR\n"
+        "• 查詢現在日期、時間與即時天氣\n"
+        "• 保留最近對話；輸入「清除記憶」可刪除\n\n"
+        "羽球活動指令：\n"
         "• 今日場次\n"
         "• 場上\n"
         "• 最新比分\n"
@@ -231,7 +238,25 @@ def needs_profile(text: str) -> bool:
     return any(word in normalized for word in ("自己", "自已", "本人", "我的"))
 
 
-def answer(text: str, state: dict[str, Any], display_name: str = "") -> str:
+def is_memory_reset(text: str) -> bool:
+    return _normalize(text) in {"忘記對話", "清除記憶", "重設對話", "resetmemory"}
+
+
+def conversation_id(source: dict[str, Any]) -> str:
+    for key, prefix in (("groupId", "group"), ("roomId", "room"), ("userId", "user")):
+        value = str(source.get(key, "")).strip()
+        if value:
+            return f"{prefix}:{value}"
+    return ""
+
+
+def answer(
+    text: str,
+    state: dict[str, Any],
+    display_name: str = "",
+    history: list[dict[str, str]] | None = None,
+    image_data_url: str = "",
+) -> str:
     normalized = "".join(str(text or "").strip().split())
     if not normalized:
         return help_message()
@@ -270,8 +295,30 @@ def answer(text: str, state: dict[str, Any], display_name: str = "") -> str:
     if normalized in {"看板", "即時看板", "連結"}:
         live_url = os.environ.get("LIVE_BOARD_URL", "").strip()
         return f"🏸 球友即時看板\n{live_url}" if live_url else "即時看板網址尚未設定。"
-    llm_reply = inference_hub.generate_reply(text, state, display_name)
+    llm_reply = inference_hub.generate_reply(
+        text, state, display_name, history=history or [], image_data_url=image_data_url
+    )
     return llm_reply or "我目前還不懂這句話。\n\n" + help_message()
+
+
+def get_message_image(message_id: str, access_token: str) -> str:
+    if not message_id:
+        raise ValueError("missing LINE message id")
+    req = request.Request(
+        LINE_CONTENT_URL.format(message_id=message_id),
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    try:
+        with request.urlopen(req, timeout=10) as response:
+            content_type = response.headers.get_content_type().lower()
+            if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+                raise ValueError("unsupported LINE image type")
+            raw = response.read(MAX_LINE_IMAGE_BYTES + 1)
+    except (error.HTTPError, error.URLError, TimeoutError) as exc:
+        raise RuntimeError("LINE image download failed") from exc
+    if not raw or len(raw) > MAX_LINE_IMAGE_BYTES:
+        raise ValueError("LINE image is empty or too large")
+    return f"data:{content_type};base64,{base64.b64encode(raw).decode('ascii')}"
 
 
 def get_display_name(user_id: str, access_token: str) -> str:

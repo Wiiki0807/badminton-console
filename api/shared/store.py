@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import time
 import uuid
@@ -20,6 +21,9 @@ MAX_ITEMS = 80
 ALLOWED_REACTIONS = ("👍", "🔥", "🏸", "👏")
 WISH_COSTS = {"partner": 3, "opponent": 4, "mixed": 3, "boss": 5}
 EMPTY_STATE = {"courts": [], "recent": [], "stats": []}
+LINE_MEMORY_TABLE = "lineMemory"
+LINE_MEMORY_MAX_MESSAGES = 12
+LINE_MEMORY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 
 # RowKey sorts newest-first so a plain top-N query returns the most recent rows.
 _MAX_TICKS = 9_999_999_999_999
@@ -191,3 +195,50 @@ def add_reaction(comment_id: str, emoji: str) -> dict[str, Any] | None:
             except ResourceModifiedError:
                 continue
     return None
+
+
+def _memory_partition(conversation_id: str) -> str:
+    """Pseudonymize LINE identifiers before using them as storage keys."""
+    return hashlib.sha256(conversation_id.encode("utf-8")).hexdigest()
+
+
+def list_line_memory(conversation_id: str) -> list[dict[str, str]]:
+    if not conversation_id:
+        return []
+    partition = _memory_partition(conversation_id)
+    cutoff = now_ms() - LINE_MEMORY_RETENTION_MS
+    with _table(LINE_MEMORY_TABLE) as table:
+        query = table.query_entities(
+            f"PartitionKey eq '{partition}'", results_per_page=LINE_MEMORY_MAX_MESSAGES * 3
+        )
+        rows = list(islice(query, LINE_MEMORY_MAX_MESSAGES * 3))
+    recent = [row for row in rows if _as_int(row.get("createdAt")) >= cutoff]
+    return [
+        {"role": str(row.get("role", "")), "content": str(row.get("content", ""))}
+        for row in reversed(recent[:LINE_MEMORY_MAX_MESSAGES])
+        if row.get("role") in {"user", "assistant"} and row.get("content")
+    ]
+
+
+def add_line_memory(conversation_id: str, role: str, content: str) -> None:
+    if not conversation_id or role not in {"user", "assistant"} or not content.strip():
+        return
+    entity = {
+        "PartitionKey": _memory_partition(conversation_id),
+        "RowKey": new_row_key(),
+        "role": role,
+        "content": content.strip()[:4500],
+        "createdAt": _epoch(now_ms()),
+    }
+    with _table(LINE_MEMORY_TABLE) as table:
+        table.create_entity(entity)
+
+
+def clear_line_memory(conversation_id: str) -> None:
+    if not conversation_id:
+        return
+    partition = _memory_partition(conversation_id)
+    with _table(LINE_MEMORY_TABLE) as table:
+        rows = table.query_entities(f"PartitionKey eq '{partition}'", select=["PartitionKey", "RowKey"])
+        for row in rows:
+            table.delete_entity(row["PartitionKey"], row["RowKey"])

@@ -83,6 +83,70 @@ class LineBotAnswerTests(unittest.TestCase):
         self.assertIn("阿力", sent["messages"][1]["content"])
         self.assertEqual("Bearer test-token", urlopen.call_args.args[0].headers["Authorization"])
 
+    @mock.patch("shared.inference_hub.request.urlopen")
+    @mock.patch.dict(
+        "os.environ",
+        {"INFERENCE_HUB_URL": "http://hub.test:8790", "INFERENCE_HUB_TOKEN": "test-token"},
+        clear=True,
+    )
+    def test_datetime_tool_call_is_executed_and_returned_to_model(self, urlopen):
+        first = mock.MagicMock()
+        first.__enter__.return_value.read.return_value = json.dumps({
+            "choices": [{"message": {
+                "content": None,
+                "tool_calls": [{
+                    "id": "call_datetime",
+                    "type": "function",
+                    "function": {"name": "get_current_datetime", "arguments": "{}"},
+                }],
+            }}]
+        }).encode("utf-8")
+        second = mock.MagicMock()
+        second.__enter__.return_value.read.return_value = json.dumps(
+            {"choices": [{"message": {"content": "現在是星期五下午。"}}]}
+        ).encode("utf-8")
+        urlopen.side_effect = [first, second]
+
+        text = inference_hub.generate_reply("現在幾點？", {}, history=[])
+
+        self.assertEqual("現在是星期五下午。", text)
+        self.assertEqual(2, urlopen.call_count)
+        followup = json.loads(urlopen.call_args_list[1].args[0].data.decode("utf-8"))
+        tool_message = next(item for item in followup["messages"] if item["role"] == "tool")
+        self.assertEqual("call_datetime", tool_message["tool_call_id"])
+        self.assertTrue(json.loads(tool_message["content"])["success"])
+
+    @mock.patch("shared.inference_hub.request.urlopen")
+    @mock.patch.dict(
+        "os.environ",
+        {"INFERENCE_HUB_URL": "http://hub.test:8790", "INFERENCE_HUB_TOKEN": "test-token"},
+        clear=True,
+    )
+    def test_history_and_image_are_sent_as_bounded_multimodal_content(self, urlopen):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(
+            {"choices": [{"message": {"content": "圖片中寫著測試文字。"}}]}
+        ).encode("utf-8")
+        urlopen.return_value = response
+
+        reply = inference_hub.generate_reply(
+            "請 OCR",
+            {},
+            history=[{"role": "user", "content": "記住代號 A7"}, {"role": "assistant", "content": "好"}],
+            image_data_url="data:image/png;base64,c21hbGw=",
+        )
+
+        self.assertEqual("圖片中寫著測試文字。", reply)
+        sent = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertIn({"role": "user", "content": "記住代號 A7"}, sent["messages"])
+        self.assertEqual("image_url", sent["messages"][-1]["content"][1]["type"])
+
+    def test_memory_commands_and_conversation_scoping(self):
+        self.assertTrue(line_bot.is_memory_reset("清除記憶"))
+        self.assertEqual("group:G123", line_bot.conversation_id({"groupId": "G123", "userId": "U1"}))
+        self.assertEqual("user:U1", line_bot.conversation_id({"userId": "U1"}))
+        self.assertIn("圖片進行內容理解與 OCR", line_bot.help_message())
+
     @mock.patch("shared.inference_hub.request.urlopen", side_effect=error.URLError("offline"))
     @mock.patch.dict(
         "os.environ",
