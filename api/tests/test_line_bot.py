@@ -147,6 +147,22 @@ class LineBotAnswerTests(unittest.TestCase):
         self.assertEqual("user:U1", line_bot.conversation_id({"userId": "U1"}))
         self.assertIn("圖片進行內容理解與 OCR", line_bot.help_message())
 
+    @mock.patch("shared.inference_hub._json_request")
+    @mock.patch.dict("os.environ", {"TAVILY_API_KEY": "tvly-test-key"}, clear=True)
+    def test_web_search_uses_tavily_basic_search(self, json_request):
+        json_request.return_value = {
+            "results": [{"title": "來源", "url": "https://example.com", "content": "摘要"}]
+        }
+
+        result = inference_hub._execute_tool("web_search", {"query": "最新消息"})
+
+        self.assertTrue(result["success"])
+        self.assertEqual("https://example.com", result["results"][0]["url"])
+        args, kwargs = json_request.call_args
+        self.assertEqual("https://api.tavily.com/search", args[0])
+        self.assertEqual("basic", kwargs["payload"]["search_depth"])
+        self.assertFalse(kwargs["payload"]["include_raw_content"])
+
     @mock.patch("shared.inference_hub.request.urlopen", side_effect=error.URLError("offline"))
     @mock.patch.dict(
         "os.environ",
