@@ -49,6 +49,17 @@ REMINDER_REQUEST_PATTERN = re.compile(
     r"記得.{0,20}(?:通知|叫)我|(?:到時|時間到).{0,8}(?:通知|叫)我)",
     re.IGNORECASE,
 )
+REMINDER_ACK_PATTERN = re.compile(
+    r"(?:成功|有成功|已(?:經)?|剛剛|剛才).{0,8}(?:提醒|通知)(?:到)?我?(?:了|啦|囉)?|"
+    r"(?:提醒|通知)(?:到)?我(?:了|啦|囉)|"
+    r"(?:謝謝|感謝|多謝).{0,12}(?:你)?(?:的)?(?:提醒|通知)",
+    re.IGNORECASE,
+)
+REMINDER_COMMAND_CUE_PATTERN = re.compile(
+    r"(?:設定|建立|新增|查看|列出|顯示|取消|刪除|修改|更改)(?:我的)?提醒|"
+    r"(?:請|幫我|麻煩|記得|再).{0,16}(?:提醒|通知|叫)我",
+    re.IGNORECASE,
+)
 REMINDER_EXPLICIT_TIME_PATTERN = re.compile(
     r"(?:\d{1,2}\s*(?:[:：]\s*\d{1,2}|點|时|時)|"
     r"[零〇一二兩三四五六七八九十]{1,3}\s*(?:點|时|時)|"
@@ -204,7 +215,19 @@ def reminder_dispatch_token_matches(candidate: str) -> bool:
 
 def looks_like_reminder_request(text: str) -> bool:
     """Cheap wake filter; semantic interpretation is delegated to 4o-mini."""
-    return bool(REMINDER_REQUEST_PATTERN.search(str(text or "")[:1000]))
+    bounded = " ".join(str(text or "").strip().split())[:1000]
+    if not REMINDER_REQUEST_PATTERN.search(bounded):
+        return False
+    # Acknowledgements such as「成功提醒我了，多謝」describe a completed
+    # notification. Do not route them into reminder CRUD unless the same message
+    # also contains a fresh command cue or an explicit new time.
+    if (
+        REMINDER_ACK_PATTERN.search(bounded)
+        and not REMINDER_COMMAND_CUE_PATTERN.search(bounded)
+        and not REMINDER_EXPLICIT_TIME_PATTERN.search(bounded)
+    ):
+        return False
+    return True
 
 
 def _has_explicit_reminder_time(text: str) -> bool:

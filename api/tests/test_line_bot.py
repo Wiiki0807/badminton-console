@@ -273,6 +273,29 @@ class LineBotAnswerTests(unittest.TestCase):
         self.assertFalse(result["needs_clarification"])
         urlopen.assert_not_called()
 
+    def test_reminder_wake_filter_ignores_completed_notification_thanks(self):
+        acknowledgements = (
+            "成功提醒我了，多謝",
+            "謝謝你提醒我",
+            "有成功通知到我了",
+        )
+
+        for text in acknowledgements:
+            with self.subTest(text=text):
+                self.assertFalse(inference_hub.looks_like_reminder_request(text))
+
+    def test_reminder_wake_filter_keeps_new_commands_after_thanks(self):
+        commands = (
+            "謝謝，明天下午三點提醒我吃藥",
+            "成功提醒我了，10分鐘後再提醒我關火",
+            "謝謝你提醒我，請再提醒我帶球拍",
+            "查看提醒",
+        )
+
+        for text in commands:
+            with self.subTest(text=text):
+                self.assertTrue(inference_hub.looks_like_reminder_request(text))
+
     @mock.patch("shared.inference_hub.request.urlopen")
     @mock.patch.dict(
         "os.environ",
