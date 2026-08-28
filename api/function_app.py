@@ -155,6 +155,9 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                     logging.exception("LINE recent image read failed")
                     image_data_url = ""
                 if image_data_url:
+                    image_data_url = line_bot.focus_recent_image_region(
+                        image_data_url, incoming_text
+                    )
                     incoming_text = line_bot.recent_image_question_prompt(incoming_text)
                 else:
                     text = "最近一張圖片已不存在或超過 24 小時，請重新傳送圖片。"
