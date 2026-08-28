@@ -105,8 +105,10 @@ LINE assistant 也支援單張 JPEG/PNG/WebP（最多 6 MB）的 VLM 圖片理�
   -HubEnvFile "<nv_infer_hub 的 .env 完整路徑>"
 ```
 
-安裝程式只把單向 HMAC 衍生值寫入排程，不會把原始 Hub token 放進排程參數；也可選擇另外設定
-GitHub Secret `LINE_REMINDER_DISPATCH_TOKEN`，並改以 `-Token` 傳入相同值。排程使用 SYSTEM
+安裝程式會把 dispatch token 寫入 `%ProgramData%\RocketAI` 並將 ACL 限制為 SYSTEM 與
+Administrators；Task Scheduler 參數不包含任何 token。執行結果記錄在同目錄的
+`reminder-dispatch.log`。也可選擇另外設定 GitHub Secret `LINE_REMINDER_DISPATCH_TOKEN`，
+並改以 `-Token` 傳入相同值。排程使用 SYSTEM
 身份且可在無人登入時運作。LINE Push 目標固定為提出提醒的 user ID；若提醒
 是在群組建立，使用者仍須先將 RocketAI 加為好友，才能可靠收到私人通知。
 
