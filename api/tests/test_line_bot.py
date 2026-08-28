@@ -78,6 +78,8 @@ class LineBotAnswerTests(unittest.TestCase):
         self.assertEqual("建議先練高遠球。", text)
         sent = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
         self.assertFalse(sent["stream"])
+        self.assertIn("多用途繁體中文 AI 助手", sent["messages"][0]["content"])
+        self.assertIn("不要把回答限制在羽球", sent["messages"][0]["content"])
         self.assertIn("阿力", sent["messages"][1]["content"])
         self.assertEqual("Bearer test-token", urlopen.call_args.args[0].headers["Authorization"])
 
