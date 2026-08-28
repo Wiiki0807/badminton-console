@@ -4,10 +4,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+from io import BytesIO
 import json
 import os
+import re
 from typing import Any
 from urllib import error, request
+
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from shared import inference_hub
 
@@ -15,6 +19,14 @@ LINE_REPLY_URL = "https://api.line.me/v2/bot/message/reply"
 LINE_PROFILE_URL = "https://api.line.me/v2/bot/profile/{user_id}"
 LINE_CONTENT_URL = "https://api-data.line.me/v2/bot/message/{message_id}/content"
 MAX_LINE_IMAGE_BYTES = 6 * 1024 * 1024
+VLM_MAX_IMAGE_EDGE = 1280
+VLM_REENCODE_THRESHOLD_BYTES = 1 * 1024 * 1024
+VLM_JPEG_QUALITY = 85
+OCR_INTENT_PATTERN = re.compile(
+    r"(?:\bocr\b|文字辨識|辨識文字|识别文字|讀取文字|讀出文字|提取文字|圖片文字)",
+    re.IGNORECASE,
+)
+OCR_NEGATION_PATTERN = re.compile(r"(?:不要|不用|不需|無需).{0,4}(?:ocr|文字)", re.IGNORECASE)
 
 
 def verify_signature(raw_body: bytes, signature: str, channel_secret: str) -> bool:
@@ -216,7 +228,8 @@ def help_message() -> str:
         "我是 RocketAI，多用途 AI 助手 🏸\n"
         "可以一般問答、寫作、翻譯、摘要、規劃與技術協助。\n"
         "也支援：\n"
-        "• 傳送圖片進行內容理解與 OCR\n"
+        "• 傳送圖片進行內容理解\n"
+        "• 如需完整 OCR，先說「下一張圖片請 OCR」再傳圖\n"
         "• 查詢現在日期、時間與即時天氣\n"
         "• 保留最近對話；輸入「清除記憶」可刪除\n\n"
         "羽球活動指令：\n"
@@ -318,7 +331,52 @@ def get_message_image(message_id: str, access_token: str) -> str:
         raise RuntimeError("LINE image download failed") from exc
     if not raw or len(raw) > MAX_LINE_IMAGE_BYTES:
         raise ValueError("LINE image is empty or too large")
+    raw, content_type = prepare_image_for_vlm(raw, content_type)
     return f"data:{content_type};base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+def prepare_image_for_vlm(raw: bytes, content_type: str) -> tuple[bytes, str]:
+    """Bound large LINE images and encode them efficiently without enlarging small ones."""
+    try:
+        with Image.open(BytesIO(raw)) as source:
+            width, height = source.size
+            if width <= 0 or height <= 0 or width * height > 80_000_000:
+                raise ValueError("invalid LINE image dimensions")
+            should_reencode = (
+                max(width, height) > VLM_MAX_IMAGE_EDGE
+                or len(raw) > VLM_REENCODE_THRESHOLD_BYTES
+            )
+            if not should_reencode:
+                return raw, content_type
+
+            image = ImageOps.exif_transpose(source)
+            image.thumbnail((VLM_MAX_IMAGE_EDGE, VLM_MAX_IMAGE_EDGE), Image.Resampling.LANCZOS)
+            if image.mode in {"RGBA", "LA"} or (image.mode == "P" and "transparency" in image.info):
+                rgba = image.convert("RGBA")
+                background = Image.new("RGB", rgba.size, "white")
+                background.paste(rgba, mask=rgba.getchannel("A"))
+                image = background
+            elif image.mode != "RGB":
+                image = image.convert("RGB")
+            output = BytesIO()
+            image.save(output, format="JPEG", quality=VLM_JPEG_QUALITY, optimize=True)
+            return output.getvalue(), "image/jpeg"
+    except (UnidentifiedImageError, OSError) as exc:
+        raise ValueError("invalid LINE image") from exc
+
+
+def history_requests_image_ocr(history: list[dict[str, str]]) -> bool:
+    """Use only the latest user turn to opt the next image into full OCR."""
+    for item in reversed(history):
+        if str(item.get("role", "")) != "user":
+            continue
+        text = str(item.get("content", "")).strip()
+        return bool(
+            text
+            and OCR_INTENT_PATTERN.search(text)
+            and not OCR_NEGATION_PATTERN.search(text)
+        )
+    return False
 
 
 def get_display_name(user_id: str, access_token: str) -> str:

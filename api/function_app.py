@@ -85,8 +85,12 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
             memory_text = incoming_text
             if message_type == "image":
                 image_data_url = line_bot.get_message_image(str(message.get("id", "")), access_token)
-                incoming_text = "請描述這張圖片並辨識其中可讀文字；若包含文字，請完整整理（OCR）。"
-                memory_text = "[使用者傳送一張圖片，要求描述與 OCR]"
+                if line_bot.history_requests_image_ocr(history):
+                    incoming_text = "使用者明確要求 OCR。請辨識並完整整理圖片中的可讀文字；看不清楚處不可猜測。"
+                    memory_text = "[使用者傳送一張圖片，明確要求 OCR]"
+                else:
+                    incoming_text = "請描述這張圖片的主要內容與重點；除非理解圖片必要，不需進行完整 OCR。"
+                    memory_text = "[使用者傳送一張圖片，要求一般圖片理解]"
             text = line_bot.answer(
                 incoming_text,
                 store.read_state(),

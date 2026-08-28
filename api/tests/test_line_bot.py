@@ -1,10 +1,13 @@
 import json
+from io import BytesIO
 import pathlib
 import sys
 import tempfile
 import unittest
 from unittest import mock
 from urllib import error
+
+from PIL import Image
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
@@ -240,12 +243,45 @@ class LineBotAnswerTests(unittest.TestCase):
         sent = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
         self.assertIn({"role": "user", "content": "記住代號 A7"}, sent["messages"])
         self.assertEqual("image_url", sent["messages"][-1]["content"][1]["type"])
+        self.assertIn("只有使用者明確要求 OCR", sent["messages"][0]["content"])
 
     def test_memory_commands_and_conversation_scoping(self):
         self.assertTrue(line_bot.is_memory_reset("清除記憶"))
         self.assertEqual("group:G123", line_bot.conversation_id({"groupId": "G123", "userId": "U1"}))
         self.assertEqual("user:U1", line_bot.conversation_id({"userId": "U1"}))
-        self.assertIn("圖片進行內容理解與 OCR", line_bot.help_message())
+        self.assertIn("下一張圖片請 OCR", line_bot.help_message())
+
+    def test_large_image_is_resized_and_encoded_as_jpeg(self):
+        source = BytesIO()
+        Image.new("RGBA", (1600, 1200), (20, 40, 60, 180)).save(source, format="PNG")
+
+        raw, content_type = line_bot.prepare_image_for_vlm(source.getvalue(), "image/png")
+
+        self.assertEqual("image/jpeg", content_type)
+        with Image.open(BytesIO(raw)) as result:
+            self.assertEqual("RGB", result.mode)
+            self.assertEqual((1280, 960), result.size)
+
+    def test_small_image_is_not_reencoded(self):
+        source = BytesIO()
+        Image.new("RGB", (640, 480), "white").save(source, format="JPEG")
+        original = source.getvalue()
+
+        raw, content_type = line_bot.prepare_image_for_vlm(original, "image/jpeg")
+
+        self.assertEqual(original, raw)
+        self.assertEqual("image/jpeg", content_type)
+
+    def test_full_ocr_requires_explicit_latest_user_intent(self):
+        self.assertTrue(line_bot.history_requests_image_ocr([
+            {"role": "user", "content": "下一張圖片請 OCR"},
+            {"role": "assistant", "content": "請傳圖片"},
+        ]))
+        self.assertFalse(line_bot.history_requests_image_ocr([
+            {"role": "user", "content": "請 OCR"},
+            {"role": "assistant", "content": "請傳圖片"},
+            {"role": "user", "content": "不用 OCR，只要描述"},
+        ]))
 
     @mock.patch("shared.inference_hub._json_request")
     @mock.patch.dict("os.environ", {"TAVILY_API_KEY": "tvly-test-key"}, clear=True)
