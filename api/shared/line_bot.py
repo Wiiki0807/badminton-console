@@ -19,6 +19,7 @@ LINE_REPLY_URL = "https://api.line.me/v2/bot/message/reply"
 LINE_PROFILE_URL = "https://api.line.me/v2/bot/profile/{user_id}"
 LINE_CONTENT_URL = "https://api-data.line.me/v2/bot/message/{message_id}/content"
 MAX_LINE_IMAGE_BYTES = 6 * 1024 * 1024
+MAX_LINE_PDF_BYTES = 10 * 1024 * 1024
 VLM_MAX_IMAGE_EDGE = 1280
 VLM_REENCODE_THRESHOLD_BYTES = 1 * 1024 * 1024
 VLM_JPEG_QUALITY = 85
@@ -235,6 +236,7 @@ def help_message() -> str:
         "也支援：\n"
         "• 傳送圖片進行內容理解\n"
         "• 如需完整 OCR，先說「下一張圖片請 OCR」再傳圖\n"
+        "• 傳送 10 MB 以下的文字型 PDF 自動產生摘要\n"
         "• 查詢現在日期、時間與即時天氣\n"
         "• 保留最近對話；輸入「清除記憶」可刪除\n\n"
         "羽球活動指令：\n"
@@ -338,6 +340,25 @@ def get_message_image(message_id: str, access_token: str) -> str:
         raise ValueError("LINE image is empty or too large")
     raw, content_type = prepare_image_for_vlm(raw, content_type)
     return f"data:{content_type};base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+def get_message_pdf(message_id: str, access_token: str, declared_size: int = 0) -> bytes:
+    if not message_id:
+        raise ValueError("missing LINE message id")
+    if declared_size > MAX_LINE_PDF_BYTES:
+        raise ValueError("PDF 必須小於 10 MB。")
+    req = request.Request(
+        LINE_CONTENT_URL.format(message_id=message_id),
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    try:
+        with request.urlopen(req, timeout=20) as response:
+            raw = response.read(MAX_LINE_PDF_BYTES + 1)
+    except (error.HTTPError, error.URLError, TimeoutError) as exc:
+        raise RuntimeError("LINE PDF download failed") from exc
+    if not raw or len(raw) > MAX_LINE_PDF_BYTES:
+        raise ValueError("PDF 必須小於 10 MB。")
+    return raw
 
 
 def prepare_image_for_vlm(raw: bytes, content_type: str) -> tuple[bytes, str]:
