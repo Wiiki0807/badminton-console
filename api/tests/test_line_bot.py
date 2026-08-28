@@ -283,6 +283,29 @@ class LineBotAnswerTests(unittest.TestCase):
             {"role": "user", "content": "不用 OCR，只要描述"},
         ]))
 
+    def test_image_prompt_carries_the_latest_user_question(self):
+        prompt = line_bot.image_prompt([
+            {"role": "user", "content": "圖片第一場對戰的人名呢？"},
+            {"role": "assistant", "content": "請傳圖片"},
+        ])
+
+        self.assertIn("圖片第一場對戰的人名呢", prompt)
+        self.assertIn("主畫面中標示 1", prompt)
+        self.assertIn("不要把教學投影片下方的放大示意框", prompt)
+        self.assertIn("左上、左下、右上、右下", prompt)
+        self.assertIn("小字筆畫不足", prompt)
+
+    def test_image_prompt_does_not_reuse_an_old_image_marker(self):
+        prompt = line_bot.image_prompt([
+            {"role": "user", "content": "圖片第一場對戰的人名呢？"},
+            {"role": "assistant", "content": "請傳圖片"},
+            {"role": "user", "content": "[使用者傳送一張圖片，要求一般圖片理解]"},
+            {"role": "assistant", "content": "圖片描述"},
+        ])
+
+        self.assertNotIn("圖片第一場對戰的人名呢", prompt)
+        self.assertIn("描述這張圖片的主要內容", prompt)
+
     @mock.patch("shared.inference_hub._json_request")
     @mock.patch.dict("os.environ", {"TAVILY_API_KEY": "tvly-test-key"}, clear=True)
     def test_web_search_uses_tavily_basic_search(self, json_request):
