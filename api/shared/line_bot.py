@@ -14,6 +14,7 @@ from urllib import error, request
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from shared import inference_hub
+from shared import github_reader
 
 LINE_REPLY_URL = "https://api.line.me/v2/bot/message/reply"
 LINE_PROFILE_URL = "https://api.line.me/v2/bot/profile/{user_id}"
@@ -315,6 +316,21 @@ def answer(
     if normalized in {"看板", "即時看板", "連結"}:
         live_url = os.environ.get("LIVE_BOARD_URL", "").strip()
         return f"🏸 球友即時看板\n{live_url}" if live_url else "即時看板網址尚未設定。"
+    repository = github_reader.extract_repository(text)
+    if repository:
+        try:
+            reference = github_reader.fetch_repository_context(*repository)
+        except github_reader.GitHubReaderError as exc:
+            return str(exc)
+        llm_reply = inference_hub.generate_reply(
+            text,
+            state,
+            display_name,
+            history=history or [],
+            reference_text=reference["content"],
+            reference_name=reference["label"],
+        )
+        return llm_reply or "GitHub repository 已讀取，但 AI 分析服務暫時無法回覆，請稍後再試。"
     llm_reply = inference_hub.generate_reply(
         text, state, display_name, history=history or [], image_data_url=image_data_url
     )
