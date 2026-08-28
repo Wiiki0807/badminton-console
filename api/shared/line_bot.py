@@ -35,6 +35,15 @@ IMAGE_REQUEST_PATTERN = re.compile(r"(?:圖片|照片|圖中|截圖|相片)")
 NEXT_IMAGE_PATTERN = re.compile(
     r"(?:下一張|下張|接下來.{0,6}(?:圖片|照片|圖)|(?:等等|待會|等一下).{0,8}(?:傳|上傳).{0,4}(?:圖片|照片|圖))"
 )
+RECENT_IMAGE_REFERENCE_PATTERN = re.compile(
+    r"(?:這|那|剛才|剛剛|前面|上一張).{0,8}(?:圖片|照片|圖)|"
+    r"(?:圖片|照片|圖)(?:中|裡|內|上)|(?:紅色|藍色)?印章|圖上|上面的?(?:字|名字|姓名|內容)",
+    re.IGNORECASE,
+)
+IMAGE_TEXT_DETAIL_PATTERN = re.compile(
+    r"(?:\bocr\b|印章|文字|名字|姓名|寫著|寫什麼|讀出|辨識|識別|號碼|數字)",
+    re.IGNORECASE,
+)
 IMAGE_EDIT_INTENT_PATTERN = re.compile(
     r"(?:轉成|改成|變成|畫成|做成|生成|產生|製作|風格化|重繪|修圖).{0,30}"
     r"(?:漫畫|卡通|動畫|插畫|水彩|油畫|素描|風格|圖片|照片|圖)|"
@@ -397,6 +406,39 @@ def history_image_edit_request(history: list[dict[str, str]]) -> str:
             return text[:1200]
         return ""
     return ""
+
+
+def history_has_recent_image(history: list[dict[str, str]]) -> bool:
+    return any(
+        str(item.get("role", "")) == "user"
+        and str(item.get("content", "")).startswith("[使用者傳送一張圖片")
+        for item in history[-12:]
+    )
+
+
+def references_recent_image(text: str, history: list[dict[str, str]]) -> bool:
+    """Recognize follow-up questions that require pixels from the latest image."""
+    bounded = str(text or "").strip()[:1000]
+    return bool(
+        bounded
+        and history_has_recent_image(history)
+        and RECENT_IMAGE_REFERENCE_PATTERN.search(bounded)
+    )
+
+
+def recent_image_question_prompt(text: str) -> str:
+    bounded = str(text or "").strip()[:1000]
+    if IMAGE_TEXT_DETAIL_PATTERN.search(bounded):
+        return (
+            "請根據隨附的最近一張圖片回答這個追問：" + bounded
+            + "\n這是針對圖片局部文字的精確辨識要求。請聚焦使用者指定的印章、姓名或文字區域，"
+            "逐字核對可見筆畫；不得聲稱沒有收到圖片。被遮住、重疊或模糊而不能確認的字，"
+            "請標示不確定並列出最多兩個候選，不可猜測。"
+        )
+    return (
+        "請根據隨附的最近一張圖片回答這個追問：" + bounded
+        + "\n不得聲稱沒有收到圖片；看不清楚的細節請明確說明。"
+    )
 
 
 def answer(

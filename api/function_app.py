@@ -148,8 +148,29 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                 continue
             image_data_url = ""
             memory_text = incoming_text
+            if message_type == "text" and line_bot.references_recent_image(incoming_text, history):
+                try:
+                    image_data_url = store.load_line_recent_image(conversation_id)
+                except Exception:
+                    logging.exception("LINE recent image read failed")
+                    image_data_url = ""
+                if image_data_url:
+                    incoming_text = line_bot.recent_image_question_prompt(incoming_text)
+                else:
+                    text = "最近一張圖片已不存在或超過 24 小時，請重新傳送圖片。"
+                    line_bot.reply(reply_token, text, access_token)
+                    try:
+                        store.add_line_memory(conversation_id, "user", memory_text)
+                        store.add_line_memory(conversation_id, "assistant", text)
+                    except Exception:
+                        logging.exception("LINE memory write failed; missing-image reply was delivered")
+                    continue
             if message_type == "image":
                 image_data_url = line_bot.get_message_image(str(message.get("id", "")), access_token)
+                try:
+                    store.save_line_recent_image(conversation_id, image_data_url)
+                except Exception:
+                    logging.exception("LINE recent image save failed; continuing with current image")
                 edit_request = line_bot.history_image_edit_request(history)
                 if edit_request:
                     try:

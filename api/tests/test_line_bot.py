@@ -1,4 +1,6 @@
 import json
+import base64
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 import pathlib
 import sys
@@ -36,6 +38,51 @@ STATE = {
 
 
 class LineBotAnswerTests(unittest.TestCase):
+    @mock.patch("shared.store._recent_image_blob")
+    def test_recent_image_is_private_bounded_and_available_for_followups(self, recent_blob):
+        blob = mock.MagicMock()
+        recent_blob.return_value = blob
+        properties = mock.MagicMock()
+        properties.last_modified = datetime.now(timezone.utc)
+        properties.content_settings.content_type = "image/png"
+        blob.get_blob_properties.return_value = properties
+        blob.download_blob.return_value.readall.return_value = b"small-png"
+        data_url = "data:image/png;base64," + base64.b64encode(b"small-png").decode()
+
+        store.save_line_recent_image("user:U123", data_url)
+        loaded = store.load_line_recent_image("user:U123")
+
+        blob.upload_blob.assert_called_once()
+        self.assertTrue(blob.upload_blob.call_args.kwargs["overwrite"])
+        self.assertEqual(data_url, loaded)
+
+    @mock.patch("shared.store._recent_image_blob")
+    def test_expired_recent_image_is_deleted(self, recent_blob):
+        blob = mock.MagicMock()
+        recent_blob.return_value = blob
+        properties = mock.MagicMock()
+        properties.last_modified = datetime.now(timezone.utc) - timedelta(hours=25)
+        blob.get_blob_properties.return_value = properties
+
+        self.assertEqual("", store.load_line_recent_image("user:U123"))
+        blob.delete_blob.assert_called_once()
+        blob.download_blob.assert_not_called()
+
+    def test_image_followup_reuses_pixels_and_requests_precise_stamp_ocr(self):
+        history = [
+            {"role": "user", "content": "[使用者傳送一張圖片，要求一般圖片理解]"},
+            {"role": "assistant", "content": "這是一張藥品明細。"},
+        ]
+        question = "圖片裡紅色印章的名字是？"
+
+        self.assertTrue(line_bot.references_recent_image(question, history))
+        prompt = line_bot.recent_image_question_prompt(question)
+        self.assertIn("隨附的最近一張圖片", prompt)
+        self.assertIn("聚焦", prompt)
+        self.assertIn("不得聲稱沒有收到圖片", prompt)
+        self.assertIn("候選", prompt)
+        self.assertFalse(line_bot.references_recent_image("今天天氣如何？", history))
+
     @mock.patch("shared.store._table")
     def test_webhook_event_claim_is_atomic_and_duplicates_are_skipped(self, table_factory):
         table = mock.MagicMock()
