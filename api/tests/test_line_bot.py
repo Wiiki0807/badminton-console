@@ -317,6 +317,167 @@ class LineBotAnswerTests(unittest.TestCase):
         self.assertIn("下一張圖片請 OCR", line_bot.help_message())
         self.assertIn("PDF 自動產生摘要", line_bot.help_message())
 
+    def test_group_wake_recognizes_line_self_mention_and_alias(self):
+        tagged = {
+            "type": "text",
+            "text": "@RocketAI 今日場次",
+            "mention": {"mentionees": [{
+                "index": 0,
+                "length": 9,
+                "type": "user",
+                "isSelf": True,
+            }]},
+        }
+        other_user = {
+            "type": "text",
+            "text": "@Tommy 今日場次",
+            "mention": {"mentionees": [{"type": "user", "isSelf": False}]},
+        }
+
+        self.assertTrue(line_bot.is_explicit_bot_wake(tagged))
+        self.assertEqual("今日場次", line_bot.strip_bot_wake_text(tagged))
+        self.assertTrue(line_bot.is_explicit_bot_wake({"type": "text", "text": "小羽，下一組"}))
+        self.assertEqual("下一組", line_bot.strip_bot_wake_text({"text": "小羽，下一組"}))
+        self.assertFalse(line_bot.is_explicit_bot_wake(other_user))
+
+    @mock.patch("shared.line_bot.inference_hub.classify_group_message")
+    def test_unaddressed_group_text_uses_semantic_classifier(self, classify):
+        classify.return_value = {
+            "respond": True,
+            "confidence": 0.96,
+            "category": "badminton_question",
+            "reason": "詢問場次",
+        }
+        history = [{"role": "assistant", "content": "目前有兩面場。"}]
+
+        handled = line_bot.should_handle_group_message(
+            {"type": "text", "text": "那下一場換誰？"}, history
+        )
+
+        self.assertTrue(handled)
+        classify.assert_called_once_with("那下一場換誰？", history)
+
+    @mock.patch("shared.line_bot.inference_hub.classify_group_message")
+    def test_explicit_group_wake_bypasses_semantic_classifier(self, classify):
+        handled = line_bot.should_handle_group_message(
+            {"type": "text", "text": "RocketAI 幫我翻譯這句話"}, []
+        )
+
+        self.assertTrue(handled)
+        classify.assert_not_called()
+
+    @mock.patch("shared.line_bot.inference_hub.classify_group_message")
+    def test_group_casual_chat_is_ignored(self, classify):
+        classify.return_value = {
+            "respond": False,
+            "confidence": 0.98,
+            "category": "casual",
+            "reason": "只是感想",
+        }
+
+        self.assertFalse(line_bot.should_handle_group_message(
+            {"type": "text", "text": "昨天羽球打到快累死"}, []
+        ))
+
+    def test_group_media_requires_a_pending_request(self):
+        self.assertFalse(line_bot.should_handle_group_message({"type": "image"}, []))
+        self.assertTrue(line_bot.should_handle_group_message(
+            {"type": "image"},
+            [{"role": "user", "content": "分析下一張圖片"}],
+        ))
+        self.assertFalse(line_bot.should_handle_group_message({"type": "file"}, []))
+        self.assertTrue(line_bot.should_handle_group_message(
+            {"type": "file"},
+            [{"role": "user", "content": "請摘要下一份 PDF"}],
+        ))
+
+    @mock.patch("function_app.store.add_line_memory")
+    @mock.patch("function_app.store.read_state")
+    @mock.patch("function_app.store.list_line_memory", return_value=[])
+    @mock.patch("function_app.line_bot.reply")
+    @mock.patch("function_app.line_bot.should_handle_group_message", return_value=False)
+    @mock.patch("function_app.line_bot.verify_signature", return_value=True)
+    @mock.patch.dict(
+        "os.environ",
+        {"LINE_CHANNEL_SECRET": "secret", "LINE_CHANNEL_ACCESS_TOKEN": "token"},
+        clear=True,
+    )
+    def test_webhook_ignores_unselected_group_message_without_memory_write(
+        self, _verify, should_handle, reply, list_memory, read_state, add_memory
+    ):
+        body = json.dumps({"events": [{
+            "type": "message",
+            "replyToken": "reply-token",
+            "source": {"type": "group", "groupId": "G123", "userId": "U1"},
+            "message": {"id": "M1", "type": "text", "text": "昨天羽球打到快累死"},
+        }]}).encode("utf-8")
+        req = function_app.func.HttpRequest(
+            method="POST",
+            url="https://example.test/api/line-webhook",
+            headers={"x-line-signature": "valid"},
+            body=body,
+        )
+
+        response = function_app.line_webhook(req)
+
+        self.assertEqual(200, response.status_code)
+        should_handle.assert_called_once_with(
+            {"id": "M1", "type": "text", "text": "昨天羽球打到快累死"}, []
+        )
+        list_memory.assert_called_once_with("group:G123")
+        reply.assert_not_called()
+        read_state.assert_not_called()
+        add_memory.assert_not_called()
+
+    @mock.patch("shared.inference_hub.request.urlopen")
+    @mock.patch.dict(
+        "os.environ",
+        {"INFERENCE_HUB_URL": "http://hub.test:8790", "INFERENCE_HUB_TOKEN": "test-token"},
+        clear=True,
+    )
+    def test_group_classifier_uses_4o_mini_without_tools(self, urlopen):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({
+            "choices": [{"message": {"content": json.dumps({
+                "respond": True,
+                "confidence": 0.93,
+                "category": "badminton_question",
+                "reason": "詢問雙打站位",
+            })}}]
+        }).encode("utf-8")
+        urlopen.return_value = response
+
+        result = inference_hub.classify_group_message(
+            "混雙接發球應該站哪裡？",
+            [{"role": "assistant", "content": "可以問我羽球問題。"}],
+        )
+
+        self.assertTrue(result["respond"])
+        sent = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertEqual("openai/openai/gpt-4o-mini", sent["model"])
+        self.assertEqual([], sent["tool_names"])
+        self.assertEqual(0, sent["temperature"])
+        self.assertEqual(120, sent["max_tokens"])
+        self.assertLessEqual(urlopen.call_args.kwargs["timeout"], 5.0)
+
+    @mock.patch("shared.inference_hub.request.urlopen")
+    @mock.patch.dict(
+        "os.environ",
+        {"INFERENCE_HUB_URL": "http://hub.test:8790", "INFERENCE_HUB_TOKEN": "test-token"},
+        clear=True,
+    )
+    def test_group_classifier_enforces_confidence_and_fails_closed(self, urlopen):
+        low_confidence = mock.MagicMock()
+        low_confidence.__enter__.return_value.read.return_value = json.dumps({
+            "choices": [{"message": {"content":
+                '{"respond":true,"confidence":0.6,"category":"unclear","reason":"不確定"}'
+            }}]
+        }).encode("utf-8")
+        urlopen.side_effect = [low_confidence, error.URLError("offline")]
+
+        self.assertFalse(inference_hub.classify_group_message("有人要打嗎？")["respond"])
+        self.assertFalse(inference_hub.classify_group_message("下一場誰上？")["respond"])
+
     def test_large_image_is_resized_and_encoded_as_jpeg(self):
         source = BytesIO()
         Image.new("RGBA", (1600, 1200), (20, 40, 60, 180)).save(source, format="PNG")

@@ -108,6 +108,16 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
             source = event.get("source") or {}
             conversation_id = line_bot.conversation_id(source)
             incoming_text = str(message.get("text", "")) if message_type == "text" else ""
+            try:
+                history = store.list_line_memory(conversation_id)
+            except Exception:
+                logging.exception("LINE memory read failed; continuing without history")
+                history = []
+            if line_bot.is_group_source(source):
+                if not line_bot.should_handle_group_message(message, history):
+                    continue
+                if message_type == "text" and line_bot.is_explicit_bot_wake(message):
+                    incoming_text = line_bot.strip_bot_wake_text(message)
             if message_type == "text" and line_bot.is_memory_reset(incoming_text):
                 store.clear_line_memory(conversation_id)
                 line_bot.reply(reply_token, "已清除這個對話最近的記憶。", access_token)
@@ -115,11 +125,6 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
             display_name = ""
             if line_bot.needs_profile(incoming_text):
                 display_name = line_bot.get_display_name(str(source.get("userId", "")), access_token)
-            try:
-                history = store.list_line_memory(conversation_id)
-            except Exception:
-                logging.exception("LINE memory read failed; continuing without history")
-                history = []
             if message_type == "file":
                 file_name = str(message.get("fileName", "document.pdf"))[:120]
                 text = summarize_line_pdf_message(message, access_token)

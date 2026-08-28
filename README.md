@@ -88,6 +88,11 @@ LINE assistant 也支援單張 JPEG/PNG/WebP（最多 6 MB）的 VLM 圖片理�
 可立即刪除該對話的記憶。網頁搜尋使用 Tavily basic search 與 GitHub Secret
 `TAVILY_API_KEY`；未設定時不會把搜尋工具提供給模型。
 
+群組與多人聊天室採智慧喚醒：Tag 官方帳號，或以「小羽／RocketAI」開頭時一定回覆；
+未點名的純文字會先由 `openai/openai/gpt-4o-mini` 在無工具、低 token 上限下分類，只有
+高信心且可回答的羽球問題才交由主要模型回覆。一般閒聊、低信心、分類逾時或錯誤都安靜忽略，
+且不寫入對話記憶。群組圖片與 PDF 必須先明確要求下一張圖片／下一份 PDF 才會處理；私聊行為不變。
+
 目前的 managed Function 不在 Tailscale tailnet 內，不能直接使用 `*.ts.net` 私有位址。
 正式啟用前請依 [LINE × Inference Hub 開發與部署計畫](docs/line-inference-hub-plan.md)
 完成網路橋接；不要在尚未建立橋接前把私有 URL 填入 Azure 環境變數。

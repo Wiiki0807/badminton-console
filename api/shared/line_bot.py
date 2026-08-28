@@ -34,6 +34,13 @@ IMAGE_REQUEST_PATTERN = re.compile(r"(?:圖片|照片|圖中|截圖|相片)")
 NEXT_IMAGE_PATTERN = re.compile(
     r"(?:下一張|下張|接下來.{0,6}(?:圖片|照片|圖)|(?:等等|待會|等一下).{0,8}(?:傳|上傳).{0,4}(?:圖片|照片|圖))"
 )
+BOT_WAKE_PATTERN = re.compile(
+    r"^\s*@?(?:Rocket\s*AI|小羽)(?:\s|[，,：:、])*",
+    re.IGNORECASE,
+)
+NEXT_PDF_PATTERN = re.compile(
+    r"(?:下一(?:份|個|張)?|接下來|等等|待會|等一下).{0,10}(?:PDF|pdf|文件|檔案)"
+)
 
 
 def verify_signature(raw_body: bytes, signature: str, channel_secret: str) -> bool:
@@ -269,6 +276,77 @@ def conversation_id(source: dict[str, Any]) -> str:
         if value:
             return f"{prefix}:{value}"
     return ""
+
+
+def is_group_source(source: dict[str, Any]) -> bool:
+    return str(source.get("type", "")).lower() in {"group", "room"} or bool(
+        source.get("groupId") or source.get("roomId")
+    )
+
+
+def is_explicit_bot_wake(message: dict[str, Any]) -> bool:
+    """Recognize an official LINE self mention or a leading RocketAI/小羽 alias."""
+    mentionees = ((message.get("mention") or {}).get("mentionees") or [])
+    if any(
+        isinstance(item, dict)
+        and item.get("type") == "user"
+        and item.get("isSelf") is True
+        for item in mentionees
+    ):
+        return True
+    return bool(BOT_WAKE_PATTERN.match(str(message.get("text", ""))))
+
+
+def strip_bot_wake_text(message: dict[str, Any]) -> str:
+    """Remove a leading bot alias/mention so deterministic commands still match."""
+    text = str(message.get("text", ""))
+    cleaned = BOT_WAKE_PATTERN.sub("", text, count=1).strip()
+    if cleaned != text.strip():
+        return cleaned
+    for item in ((message.get("mention") or {}).get("mentionees") or []):
+        if not isinstance(item, dict) or item.get("isSelf") is not True:
+            continue
+        try:
+            index = int(item.get("index", -1))
+            length = int(item.get("length", 0))
+        except (TypeError, ValueError):
+            continue
+        if index == 0 and 0 < length <= len(text):
+            return text[length:].lstrip(" ，,：:、").strip()
+    return text.strip()
+
+
+def history_requests_next_pdf(history: list[dict[str, str]]) -> bool:
+    """Allow one group PDF after an explicit request for the upcoming document."""
+    for item in reversed(history):
+        if str(item.get("role", "")) != "user":
+            continue
+        text = str(item.get("content", "")).strip()
+        return bool(text and NEXT_PDF_PATTERN.search(text))
+    return False
+
+
+def should_handle_group_message(
+    message: dict[str, Any], history: list[dict[str, str]] | None = None
+) -> bool:
+    """Apply explicit wake rules, then semantic routing for unaddressed group text."""
+    message_type = str(message.get("type", ""))
+    recent_history = history or []
+    if message_type == "text":
+        if is_explicit_bot_wake(message):
+            return True
+        classification = inference_hub.classify_group_message(
+            str(message.get("text", "")), recent_history
+        )
+        return classification.get("respond") is True
+    if message_type == "image":
+        return bool(
+            history_requests_image_ocr(recent_history)
+            or latest_user_request(recent_history)
+        )
+    if message_type == "file":
+        return history_requests_next_pdf(recent_history)
+    return False
 
 
 def answer(
