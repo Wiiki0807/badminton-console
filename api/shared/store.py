@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import base64
 import hashlib
 import os
+import re
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -35,6 +37,9 @@ LINE_WEBHOOK_TABLE = "lineWebhookEvents"
 LINE_MEMORY_MAX_MESSAGES = 12
 LINE_MEMORY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 LINE_GENERATED_PREFIX = "line-generated/"
+LINE_RECENT_IMAGE_PREFIX = "line-recent-image/"
+LINE_RECENT_IMAGE_RETENTION = timedelta(hours=24)
+MAX_LINE_RECENT_IMAGE_BYTES = 6 * 1024 * 1024
 
 # RowKey sorts newest-first so a plain top-N query returns the most recent rows.
 _MAX_TICKS = 9_999_999_999_999
@@ -271,6 +276,63 @@ def claim_line_webhook_event(event_id: str) -> bool:
         return True
     except ResourceExistsError:
         return False
+
+
+def _recent_image_blob(conversation_id: str) -> BlobClient:
+    digest = hashlib.sha256(conversation_id.encode("utf-8")).hexdigest()
+    return BlobClient.from_connection_string(
+        _connection_string(),
+        container_name=CONTAINER,
+        blob_name=f"{LINE_RECENT_IMAGE_PREFIX}{digest}",
+    )
+
+
+def save_line_recent_image(conversation_id: str, image_data_url: str) -> None:
+    """Privately retain one bounded VLM image per conversation; the next image overwrites it."""
+    if not conversation_id:
+        return
+    match = re.fullmatch(
+        r"data:(image/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=\r\n]+)",
+        image_data_url or "",
+    )
+    if not match:
+        raise ValueError("invalid recent LINE image")
+    try:
+        raw = base64.b64decode(match.group(2), validate=True)
+    except ValueError as exc:
+        raise ValueError("invalid recent LINE image base64") from exc
+    if not raw or len(raw) > MAX_LINE_RECENT_IMAGE_BYTES:
+        raise ValueError("recent LINE image is empty or too large")
+    _recent_image_blob(conversation_id).upload_blob(
+        raw,
+        overwrite=True,
+        content_settings=ContentSettings(content_type=match.group(1)),
+        metadata={"retentionHours": "24"},
+    )
+
+
+def load_line_recent_image(conversation_id: str) -> str:
+    """Return the conversation's private recent image only while it is within retention."""
+    if not conversation_id:
+        return ""
+    blob = _recent_image_blob(conversation_id)
+    try:
+        properties = blob.get_blob_properties()
+        last_modified = properties.last_modified
+        if last_modified.tzinfo is None:
+            last_modified = last_modified.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) - last_modified > LINE_RECENT_IMAGE_RETENTION:
+            blob.delete_blob()
+            return ""
+        raw = blob.download_blob().readall()
+    except ResourceNotFoundError:
+        return ""
+    if not raw or len(raw) > MAX_LINE_RECENT_IMAGE_BYTES:
+        return ""
+    content_type = str(properties.content_settings.content_type or "").lower()
+    if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+        return ""
+    return f"data:{content_type};base64,{base64.b64encode(raw).decode('ascii')}"
 
 
 def upload_line_generated_image(raw: bytes, content_type: str) -> tuple[str, str]:
