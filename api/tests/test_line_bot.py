@@ -35,6 +35,43 @@ STATE = {
 
 
 class LineBotAnswerTests(unittest.TestCase):
+    @mock.patch.dict(
+        "os.environ",
+        {"INFERENCE_HUB_MODEL": "azure/openai/gpt-5.6-sol"},
+        clear=True,
+    )
+    def test_fast_chat_router_reserves_gpt56_for_complex_requests(self):
+        self.assertEqual(
+            "openai/openai/gpt-4o-mini",
+            inference_hub.select_chat_model("嘿，在幹嘛？"),
+        )
+        self.assertEqual(
+            "azure/openai/gpt-5.6-sol",
+            inference_hub.select_chat_model("請分析這個系統的架構並提出改善方案"),
+        )
+        self.assertEqual(
+            "azure/openai/gpt-5.6-sol",
+            inference_hub.select_chat_model("這是什麼？", has_image=True),
+        )
+
+    @mock.patch("shared.line_bot.push_text")
+    @mock.patch("shared.line_bot.threading.Timer")
+    def test_processing_notice_is_delayed_and_cancelable(self, timer_type, push_text):
+        timer = mock.MagicMock()
+        timer_type.return_value = timer
+
+        result = line_bot.start_processing_notice(
+            {"type": "user", "userId": "U123"}, "access-token", delay_seconds=8
+        )
+
+        self.assertIs(timer, result)
+        timer_type.assert_called_once()
+        self.assertEqual(8, timer_type.call_args.args[0])
+        timer_type.call_args.args[1]()
+        push_text.assert_called_once_with("U123", "處理中噢，稍等一下 🙌", "access-token")
+        timer.start.assert_called_once()
+        self.assertTrue(timer.daemon)
+
     def test_next_image_comic_request_is_one_shot(self):
         history = [{"role": "user", "content": "小羽，把下一張照片轉成漫畫風格"}]
         self.assertEqual(
