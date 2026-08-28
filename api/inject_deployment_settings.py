@@ -27,6 +27,9 @@ def inject_settings(env: Mapping[str, str] = os.environ, target: Path = TARGET) 
         or "openai/openai/gpt-4o-mini",
         "INFERENCE_HUB_TIMEOUT_SECONDS": env.get("INFERENCE_HUB_TIMEOUT_SECONDS", "").strip() or "8",
     }
+    brave_key = env.get("BRAVE_SEARCH_API_KEY", "").strip()
+    if brave_key:
+        settings["BRAVE_SEARCH_API_KEY"] = brave_key
     target.write_text(json.dumps(settings, ensure_ascii=False), encoding="utf-8")
     print("Inference Hub deployment settings injected")
     return True
