@@ -28,6 +28,10 @@ OCR_INTENT_PATTERN = re.compile(
 )
 OCR_NEGATION_PATTERN = re.compile(r"(?:不要|不用|不需|無需).{0,4}(?:ocr|文字)", re.IGNORECASE)
 FIRST_MATCH_PATTERN = re.compile(r"(?:第\s*[一1]\s*(?:場|面)|第一場)")
+IMAGE_REQUEST_PATTERN = re.compile(r"(?:圖片|照片|圖中|截圖|相片)")
+NEXT_IMAGE_PATTERN = re.compile(
+    r"(?:下一張|下張|接下來.{0,6}(?:圖片|照片|圖)|(?:等等|待會|等一下).{0,8}(?:傳|上傳).{0,4}(?:圖片|照片|圖))"
+)
 
 
 def verify_signature(raw_body: bytes, signature: str, channel_secret: str) -> bool:
@@ -381,15 +385,30 @@ def history_requests_image_ocr(history: list[dict[str, str]]) -> bool:
 
 
 def latest_user_request(history: list[dict[str, str]]) -> str:
-    """Return a bounded latest user turn, excluding internal image-memory markers."""
+    """Return only an unconsumed request that clearly targets the upcoming image."""
+    user_turns = []
     for item in reversed(history):
         if str(item.get("role", "")) != "user":
             continue
         text = str(item.get("content", "")).strip()
-        if text.startswith("[使用者傳送一張圖片"):
-            return ""
-        return text[:800]
-    return ""
+        user_turns.append(text)
+        if len(user_turns) == 2:
+            break
+    if not user_turns:
+        return ""
+    latest = user_turns[0]
+    if not latest or latest.startswith("[使用者傳送一張圖片"):
+        return ""
+    if NEXT_IMAGE_PATTERN.search(latest):
+        return latest[:800]
+    if not IMAGE_REQUEST_PATTERN.search(latest):
+        return ""
+    # A normal "this image" question immediately following an image marker is a
+    # follow-up about the consumed image, not an instruction for a future image.
+    previous_user = user_turns[1] if len(user_turns) > 1 else ""
+    if previous_user.startswith("[使用者傳送一張圖片"):
+        return ""
+    return latest[:800]
 
 
 def image_prompt(history: list[dict[str, str]]) -> str:
