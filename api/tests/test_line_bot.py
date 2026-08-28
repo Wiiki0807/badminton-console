@@ -263,6 +263,35 @@ class LineBotAnswerTests(unittest.TestCase):
         self.assertEqual("basic", kwargs["payload"]["search_depth"])
         self.assertFalse(kwargs["payload"]["include_raw_content"])
 
+    @mock.patch("shared.inference_hub._json_request")
+    def test_weather_normalizes_full_banqiao_district_name(self, json_request):
+        json_request.side_effect = [
+            {"results": [{
+                "name": "板橋區",
+                "latitude": 25.01,
+                "longitude": 121.47,
+                "country": "台灣",
+                "admin1": "臺北市",
+                "admin2": "新北市",
+            }]},
+            {"current": {
+                "time": "2026-08-28T17:15",
+                "temperature_2m": 31.8,
+                "apparent_temperature": 38.2,
+                "relative_humidity_2m": 71,
+                "precipitation": 0,
+                "weather_code": 3,
+                "wind_speed_10m": 5.8,
+            }},
+        ]
+
+        result = inference_hub._execute_tool("get_current_weather", {"location": "新北市板橋區"})
+
+        self.assertTrue(result["success"])
+        self.assertEqual("板橋區", result["location"])
+        self.assertEqual("新北市", result["admin1"])
+        self.assertIn("name=Banqiao", json_request.call_args_list[0].args[0])
+
     @mock.patch("shared.inference_hub.request.urlopen", side_effect=error.URLError("offline"))
     @mock.patch.dict(
         "os.environ",

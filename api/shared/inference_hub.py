@@ -71,6 +71,20 @@ WEATHER_LOCATION_ALIASES = {
 }
 
 
+def _weather_query_location(location: str) -> str:
+    """Normalize a Taiwan city/district phrase for Open-Meteo geocoding."""
+    normalized = "".join(location.split()).replace("臺灣", "").replace("台灣", "")
+    if normalized in WEATHER_LOCATION_ALIASES:
+        return WEATHER_LOCATION_ALIASES[normalized]
+    # Models often provide a full phrase such as 新北市板橋區. Prefer the most
+    # specific known suffix (板橋區) over the containing municipality (新北市).
+    suffixes = sorted(WEATHER_LOCATION_ALIASES, key=len, reverse=True)
+    for alias in suffixes:
+        if normalized.endswith(alias):
+            return WEATHER_LOCATION_ALIASES[alias]
+    return normalized
+
+
 @lru_cache(maxsize=1)
 def _deployment_settings() -> dict[str, str]:
     """Read the production-only file generated from GitHub Secrets during deploy."""
@@ -155,7 +169,7 @@ def _execute_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         location = str(arguments.get("location", "")).strip()[:100]
         if not location:
             return {"success": False, "error": "缺少地點"}
-        query_location = WEATHER_LOCATION_ALIASES.get(location, location)
+        query_location = _weather_query_location(location)
         geo = _json_request(
             "https://geocoding-api.open-meteo.com/v1/search?"
             + urlencode({"name": query_location, "count": 1, "language": "zh", "format": "json"})
@@ -178,7 +192,9 @@ def _execute_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         return {
             "success": True,
             "location": place.get("name", location),
-            "admin1": place.get("admin1"),
+            # Open-Meteo currently labels Banqiao's admin1 as legacy Taipei and
+            # its accurate municipality as admin2 (New Taipei City).
+            "admin1": place.get("admin2") or place.get("admin1"),
             "country": place.get("country"),
             "observed_at": current.get("time"),
             "weather": WEATHER_CODE_ZH.get(code, f"天氣代碼 {code}"),
