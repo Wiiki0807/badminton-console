@@ -6,10 +6,8 @@ import hashlib
 import hmac
 from io import BytesIO
 import json
-import logging
 import os
 import re
-import threading
 from typing import Any
 from urllib import error, request
 
@@ -19,7 +17,7 @@ from shared import inference_hub
 from shared import github_reader
 
 LINE_REPLY_URL = "https://api.line.me/v2/bot/message/reply"
-LINE_PUSH_URL = "https://api.line.me/v2/bot/message/push"
+LINE_LOADING_URL = "https://api.line.me/v2/bot/chat/loading/start"
 LINE_PROFILE_URL = "https://api.line.me/v2/bot/profile/{user_id}"
 LINE_CONTENT_URL = "https://api-data.line.me/v2/bot/message/{message_id}/content"
 MAX_LINE_IMAGE_BYTES = 6 * 1024 * 1024
@@ -287,50 +285,28 @@ def conversation_id(source: dict[str, Any]) -> str:
     return ""
 
 
-def line_target_id(source: dict[str, Any]) -> str:
-    """Return the LINE user/group/room identifier accepted by the Push API."""
-    for key in ("groupId", "roomId", "userId"):
-        value = str(source.get(key, "")).strip()
-        if value:
-            return value
-    return ""
-
-
-def push_text(target_id: str, text: str, access_token: str) -> None:
-    if not target_id:
-        raise ValueError("missing LINE push target")
+def show_loading_animation(
+    source: dict[str, Any], access_token: str, loading_seconds: int = 25
+) -> bool:
+    """Show LINE's non-message loading UI for one-on-one chats only."""
+    if is_group_source(source):
+        return False
+    user_id = str(source.get("userId", "")).strip()
+    if not user_id or loading_seconds not in range(5, 61, 5):
+        return False
     payload = json.dumps(
-        {"to": target_id, "messages": [{"type": "text", "text": text[:5000]}]},
+        {"chatId": user_id, "loadingSeconds": loading_seconds},
         ensure_ascii=False,
     ).encode("utf-8")
     req = request.Request(
-        LINE_PUSH_URL,
+        LINE_LOADING_URL,
         data=payload,
         method="POST",
         headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
     )
     with request.urlopen(req, timeout=8) as response:
         response.read()
-
-
-def start_processing_notice(
-    source: dict[str, Any], access_token: str, delay_seconds: float = 8.0
-) -> threading.Timer | None:
-    """Push one notice only when the synchronous webhook remains busy past the delay."""
-    target_id = line_target_id(source)
-    if not target_id or not access_token:
-        return None
-
-    def send_notice() -> None:
-        try:
-            push_text(target_id, "處理中噢，稍等一下 🙌", access_token)
-        except Exception:
-            logging.exception("LINE delayed processing notice failed")
-
-    timer = threading.Timer(delay_seconds, send_notice)
-    timer.daemon = True
-    timer.start()
-    return timer
+    return True
 
 
 def is_group_source(source: dict[str, Any]) -> bool:

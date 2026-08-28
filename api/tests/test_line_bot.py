@@ -13,6 +13,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from shared import line_bot
 from shared import inference_hub
+from shared import store
 from shared import pdf_summary
 from shared import github_reader
 import function_app
@@ -35,6 +36,19 @@ STATE = {
 
 
 class LineBotAnswerTests(unittest.TestCase):
+    @mock.patch("shared.store._table")
+    def test_webhook_event_claim_is_atomic_and_duplicates_are_skipped(self, table_factory):
+        table = mock.MagicMock()
+        table_factory.return_value.__enter__.return_value = table
+        table.create_entity.side_effect = [None, store.ResourceExistsError("duplicate")]
+
+        self.assertTrue(store.claim_line_webhook_event("event-123"))
+        self.assertFalse(store.claim_line_webhook_event("event-123"))
+        first = table.create_entity.call_args_list[0].args[0]
+        second = table.create_entity.call_args_list[1].args[0]
+        self.assertEqual(first["RowKey"], second["RowKey"])
+        self.assertNotIn("event-123", first["RowKey"])
+
     @mock.patch.dict(
         "os.environ",
         {"INFERENCE_HUB_MODEL": "azure/openai/gpt-5.6-sol"},
@@ -54,23 +68,22 @@ class LineBotAnswerTests(unittest.TestCase):
             inference_hub.select_chat_model("這是什麼？", has_image=True),
         )
 
-    @mock.patch("shared.line_bot.push_text")
-    @mock.patch("shared.line_bot.threading.Timer")
-    def test_processing_notice_is_delayed_and_cancelable(self, timer_type, push_text):
-        timer = mock.MagicMock()
-        timer_type.return_value = timer
+    @mock.patch("shared.line_bot.request.urlopen")
+    def test_loading_animation_uses_non_message_endpoint_and_skips_groups(self, urlopen):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b"{}"
+        urlopen.return_value = response
 
-        result = line_bot.start_processing_notice(
-            {"type": "user", "userId": "U123"}, "access-token", delay_seconds=8
-        )
-
-        self.assertIs(timer, result)
-        timer_type.assert_called_once()
-        self.assertEqual(8, timer_type.call_args.args[0])
-        timer_type.call_args.args[1]()
-        push_text.assert_called_once_with("U123", "處理中噢，稍等一下 🙌", "access-token")
-        timer.start.assert_called_once()
-        self.assertTrue(timer.daemon)
+        self.assertTrue(line_bot.show_loading_animation(
+            {"type": "user", "userId": "U123"}, "access-token", loading_seconds=25
+        ))
+        sent = urlopen.call_args.args[0]
+        self.assertEqual("https://api.line.me/v2/bot/chat/loading/start", sent.full_url)
+        self.assertEqual({"chatId": "U123", "loadingSeconds": 25}, json.loads(sent.data))
+        self.assertFalse(line_bot.show_loading_animation(
+            {"type": "group", "groupId": "G123", "userId": "U123"}, "access-token"
+        ))
+        self.assertEqual(1, urlopen.call_count)
 
     def test_next_image_comic_request_is_one_shot(self):
         history = [{"role": "user", "content": "小羽，把下一張照片轉成漫畫風格"}]

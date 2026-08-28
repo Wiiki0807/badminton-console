@@ -104,9 +104,15 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
         message_type = message.get("type")
         if event.get("type") != "message" or message_type not in {"text", "image", "file"} or not reply_token:
             continue
-        processing_timer = None
         try:
             source = event.get("source") or {}
+            try:
+                if not store.claim_line_webhook_event(str(event.get("webhookEventId", ""))):
+                    logging.info("Skipped duplicate LINE webhook event")
+                    continue
+            except Exception:
+                # Deduplication is protective rather than required for availability.
+                logging.exception("LINE webhook deduplication unavailable; processing event")
             conversation_id = line_bot.conversation_id(source)
             incoming_text = str(message.get("text", "")) if message_type == "text" else ""
             try:
@@ -123,7 +129,10 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                 store.clear_line_memory(conversation_id)
                 line_bot.reply(reply_token, "已清除這個對話最近的記憶。", access_token)
                 continue
-            processing_timer = line_bot.start_processing_notice(source, access_token)
+            try:
+                line_bot.show_loading_animation(source, access_token, loading_seconds=25)
+            except Exception:
+                logging.exception("LINE loading animation failed; continuing without it")
             display_name = ""
             if line_bot.needs_profile(incoming_text):
                 display_name = line_bot.get_display_name(str(source.get("userId", "")), access_token)
@@ -192,9 +201,6 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
             logging.exception("LINE message processing failed")
             # A 200 response prevents LINE from repeatedly redelivering a message whose
             # reply failed after the webhook itself was validated successfully.
-        finally:
-            if processing_timer is not None:
-                processing_timer.cancel()
     return json_response({"ok": True})
 
 
