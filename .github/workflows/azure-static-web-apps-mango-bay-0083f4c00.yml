@@ -30,6 +30,7 @@ jobs:
           INFERENCE_HUB_MODEL: ${{ github.ref == 'refs/heads/main' && vars.LINE_INFERENCE_HUB_MODEL || '' }}
           INFERENCE_HUB_TIMEOUT_SECONDS: ${{ github.ref == 'refs/heads/main' && vars.LINE_INFERENCE_HUB_TIMEOUT_SECONDS || '' }}
           TAVILY_API_KEY: ${{ github.ref == 'refs/heads/main' && secrets.TAVILY_API_KEY || '' }}
+          LINE_REMINDER_DISPATCH_TOKEN: ${{ github.ref == 'refs/heads/main' && secrets.LINE_REMINDER_DISPATCH_TOKEN || '' }}
         run: |
           set -euo pipefail
           python api/inject_deployment_settings.py

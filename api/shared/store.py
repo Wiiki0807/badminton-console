@@ -34,12 +34,15 @@ WISH_COSTS = {"partner": 3, "opponent": 4, "mixed": 3, "boss": 5}
 EMPTY_STATE = {"courts": [], "recent": [], "stats": []}
 LINE_MEMORY_TABLE = "lineMemory"
 LINE_WEBHOOK_TABLE = "lineWebhookEvents"
+LINE_REMINDER_TABLE = "lineReminders"
 LINE_MEMORY_MAX_MESSAGES = 12
 LINE_MEMORY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 LINE_GENERATED_PREFIX = "line-generated/"
 LINE_RECENT_IMAGE_PREFIX = "line-recent-image/"
 LINE_RECENT_IMAGE_RETENTION = timedelta(hours=24)
 MAX_LINE_RECENT_IMAGE_BYTES = 6 * 1024 * 1024
+LINE_REMINDER_MAX_PENDING = 50
+LINE_REMINDER_MAX_FUTURE_MS = 5 * 365 * 24 * 60 * 60 * 1000
 
 # RowKey sorts newest-first so a plain top-N query returns the most recent rows.
 _MAX_TICKS = 9_999_999_999_999
@@ -278,6 +281,173 @@ def claim_line_webhook_event(event_id: str) -> bool:
         return False
 
 
+def _reminder_partition(user_id: str) -> str:
+    return hashlib.sha256(f"line-reminder:{user_id}".encode("utf-8")).hexdigest()
+
+
+def _reminder_from_entity(row: dict[str, Any]) -> dict[str, Any]:
+    reminder_id = str(row.get("RowKey", ""))
+    return {
+        "id": reminder_id,
+        "shortId": reminder_id[:6].upper(),
+        "title": str(row.get("title", "")),
+        "dueAt": _as_int(row.get("dueAt")),
+        "status": str(row.get("status", "")),
+        "targetId": str(row.get("targetId", "")),
+        "attempts": int(row.get("attempts", 0) or 0),
+        "PartitionKey": str(row.get("PartitionKey", "")),
+        "RowKey": reminder_id,
+    }
+
+
+def list_line_reminders(user_id: str) -> list[dict[str, Any]]:
+    if not user_id:
+        return []
+    partition = _reminder_partition(user_id)
+    with _table(LINE_REMINDER_TABLE) as table:
+        rows = list(table.query_entities(
+            f"PartitionKey eq '{partition}' and status eq 'pending'"
+        ))
+    pending = [_reminder_from_entity(row) for row in rows]
+    return sorted(pending, key=lambda row: (int(row["dueAt"]), row["id"]))
+
+
+def create_line_reminder(
+    user_id: str, target_id: str, title: str, due_at_ms: int
+) -> dict[str, Any]:
+    bounded_title = " ".join(str(title or "").split())[:1000]
+    current = now_ms()
+    if not user_id or not target_id or not bounded_title:
+        raise ValueError("invalid reminder")
+    if due_at_ms <= current or due_at_ms > current + LINE_REMINDER_MAX_FUTURE_MS:
+        raise ValueError("invalid reminder time")
+    if len(list_line_reminders(user_id)) >= LINE_REMINDER_MAX_PENDING:
+        raise ValueError("too many pending reminders")
+    entity = {
+        "PartitionKey": _reminder_partition(user_id),
+        # LINE's retry header requires a UUID; keep the same UUID for every retry.
+        "RowKey": str(uuid.uuid4()),
+        "title": bounded_title,
+        "dueAt": _epoch(due_at_ms),
+        "targetId": target_id[:80],
+        "timezone": "Asia/Taipei",
+        "status": "pending",
+        "attempts": 0,
+        "leaseUntil": _epoch(0),
+        "createdAt": _epoch(current),
+        "updatedAt": _epoch(current),
+    }
+    with _table(LINE_REMINDER_TABLE) as table:
+        table.create_entity(entity)
+    return _reminder_from_entity(entity)
+
+
+def _matching_reminders(user_id: str, identifier: str) -> list[dict[str, Any]]:
+    rows = list_line_reminders(user_id)
+    needle = " ".join(str(identifier or "").strip().split()).casefold()
+    if not needle:
+        return []
+    exact_id = [row for row in rows if row["id"].casefold().startswith(needle)]
+    if exact_id:
+        return exact_id
+    return [row for row in rows if needle in row["title"].casefold()]
+
+
+def cancel_line_reminder(user_id: str, identifier: str) -> dict[str, Any]:
+    if str(identifier).strip().casefold() in {"全部", "all", "所有提醒"}:
+        rows = list_line_reminders(user_id)
+        with _table(LINE_REMINDER_TABLE) as table:
+            for row in rows:
+                table.update_entity({
+                    "PartitionKey": row["PartitionKey"], "RowKey": row["RowKey"],
+                    "status": "cancelled", "updatedAt": _epoch(now_ms()),
+                }, mode=UpdateMode.MERGE)
+        return {"status": "cancelled_all", "count": len(rows)}
+    matches = _matching_reminders(user_id, identifier)
+    if not matches:
+        return {"status": "not_found"}
+    if len(matches) > 1:
+        return {"status": "ambiguous", "rows": matches}
+    row = matches[0]
+    with _table(LINE_REMINDER_TABLE) as table:
+        table.update_entity({
+            "PartitionKey": row["PartitionKey"], "RowKey": row["RowKey"],
+            "status": "cancelled", "updatedAt": _epoch(now_ms()),
+        }, mode=UpdateMode.MERGE)
+    row["status"] = "cancelled"
+    return {"status": "cancelled", "row": row}
+
+
+def update_line_reminder(
+    user_id: str, identifier: str, *, title: str = "", due_at_ms: int = 0
+) -> dict[str, Any]:
+    matches = _matching_reminders(user_id, identifier)
+    if not matches:
+        return {"status": "not_found"}
+    if len(matches) > 1:
+        return {"status": "ambiguous", "rows": matches}
+    row = matches[0]
+    entity: dict[str, Any] = {
+        "PartitionKey": row["PartitionKey"], "RowKey": row["RowKey"],
+        "updatedAt": _epoch(now_ms()),
+    }
+    if title:
+        entity["title"] = " ".join(title.split())[:1000]
+    if due_at_ms:
+        current = now_ms()
+        if due_at_ms <= current or due_at_ms > current + LINE_REMINDER_MAX_FUTURE_MS:
+            raise ValueError("invalid reminder time")
+        entity["dueAt"] = _epoch(due_at_ms)
+        entity["leaseUntil"] = _epoch(0)
+    if len(entity) == 3:
+        raise ValueError("missing reminder update")
+    with _table(LINE_REMINDER_TABLE) as table:
+        table.update_entity(entity, mode=UpdateMode.MERGE)
+    row["title"] = str(entity.get("title", row["title"]))
+    row["dueAt"] = due_at_ms or row["dueAt"]
+    return {"status": "updated", "row": row}
+
+
+def claim_due_line_reminders(limit: int = 20) -> list[dict[str, Any]]:
+    """Lease due reminders atomically enough for overlapping scheduler invocations."""
+    current = now_ms()
+    with _table(LINE_REMINDER_TABLE) as table:
+        query = table.query_entities(
+            f"status eq 'pending' and dueAt le {current}L", results_per_page=max(1, min(limit * 3, 100))
+        )
+        candidates = list(islice(query, max(1, min(limit * 3, 100))))
+        claimed: list[dict[str, Any]] = []
+        for row in candidates:
+            if len(claimed) >= limit or _as_int(row.get("leaseUntil")) > current:
+                continue
+            row["leaseUntil"] = _epoch(current + 2 * 60 * 1000)
+            row["attempts"] = int(row.get("attempts", 0) or 0) + 1
+            row["updatedAt"] = _epoch(current)
+            try:
+                table.update_entity(
+                    row, mode=UpdateMode.MERGE, etag=row.metadata["etag"],
+                    match_condition=MatchConditions.IfNotModified,
+                )
+            except ResourceModifiedError:
+                continue
+            claimed.append(_reminder_from_entity(row))
+        return claimed
+
+
+def finish_line_reminder(row: dict[str, Any], *, sent: bool, error_message: str = "") -> None:
+    entity = {
+        "PartitionKey": row["PartitionKey"], "RowKey": row["RowKey"],
+        "status": "sent" if sent else "pending",
+        "leaseUntil": _epoch(0 if sent else now_ms() + 60 * 1000),
+        "updatedAt": _epoch(now_ms()),
+        "lastError": "" if sent else str(error_message or "push failed")[:500],
+    }
+    if sent:
+        entity["sentAt"] = _epoch(now_ms())
+    with _table(LINE_REMINDER_TABLE) as table:
+        table.update_entity(entity, mode=UpdateMode.MERGE)
+
+
 def _recent_image_blob(conversation_id: str) -> BlobClient:
     digest = hashlib.sha256(conversation_id.encode("utf-8")).hexdigest()
     return BlobClient.from_connection_string(
@@ -288,7 +458,7 @@ def _recent_image_blob(conversation_id: str) -> BlobClient:
 
 
 def save_line_recent_image(conversation_id: str, image_data_url: str) -> None:
-    """Privately retain one bounded VLM image per conversation; the next image overwrites it."""
+    """Privately retain one original LINE image per sender context; next image overwrites it."""
     if not conversation_id:
         return
     match = re.fullmatch(

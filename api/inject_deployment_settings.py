@@ -30,6 +30,9 @@ def inject_settings(env: Mapping[str, str] = os.environ, target: Path = TARGET) 
     tavily_key = env.get("TAVILY_API_KEY", "").strip()
     if tavily_key:
         settings["TAVILY_API_KEY"] = tavily_key
+    reminder_token = env.get("LINE_REMINDER_DISPATCH_TOKEN", "").strip()
+    if reminder_token:
+        settings["LINE_REMINDER_DISPATCH_TOKEN"] = reminder_token
     target.write_text(json.dumps(settings, ensure_ascii=False), encoding="utf-8")
     print("Inference Hub deployment settings injected")
     return True
