@@ -6,13 +6,22 @@ import hashlib
 import os
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from itertools import islice
 from typing import Any
 
 from azure.core import MatchConditions
 from azure.core.exceptions import ResourceExistsError, ResourceModifiedError, ResourceNotFoundError
 from azure.data.tables import EntityProperty, EdmType, TableClient, UpdateMode
-from azure.storage.blob import BlobClient
+from azure.storage.blob import (
+    BlobClient,
+    BlobSasPermissions,
+    BlobServiceClient,
+    ContentSettings,
+    generate_blob_sas,
+)
+from PIL import Image, ImageOps
 
 CONTAINER = "live"
 STATE_BLOB = "state.json"
@@ -24,6 +33,7 @@ EMPTY_STATE = {"courts": [], "recent": [], "stats": []}
 LINE_MEMORY_TABLE = "lineMemory"
 LINE_MEMORY_MAX_MESSAGES = 12
 LINE_MEMORY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+LINE_GENERATED_PREFIX = "line-generated/"
 
 # RowKey sorts newest-first so a plain top-N query returns the most recent rows.
 _MAX_TICKS = 9_999_999_999_999
@@ -242,3 +252,53 @@ def clear_line_memory(conversation_id: str) -> None:
         rows = table.query_entities(f"PartitionKey eq '{partition}'", select=["PartitionKey", "RowKey"])
         for row in rows:
             table.delete_entity(row["PartitionKey"], row["RowKey"])
+
+
+def upload_line_generated_image(raw: bytes, content_type: str) -> tuple[str, str]:
+    """Upload a generated image plus LINE-sized preview and return one-hour SAS URLs."""
+    if content_type not in {"image/png", "image/jpeg"} or not raw:
+        raise ValueError("unsupported generated image")
+    try:
+        with Image.open(BytesIO(raw)) as source:
+            preview = ImageOps.exif_transpose(source).convert("RGB")
+            preview.thumbnail((512, 512), Image.Resampling.LANCZOS)
+            preview_buffer = BytesIO()
+            preview.save(preview_buffer, format="JPEG", quality=82, optimize=True)
+    except OSError as exc:
+        raise ValueError("invalid generated image") from exc
+
+    connection_string = _connection_string()
+    settings = {
+        key.strip(): value.strip()
+        for item in connection_string.split(";") if "=" in item
+        for key, value in [item.split("=", 1)]
+    }
+    account_name = settings.get("AccountName", "")
+    account_key = settings.get("AccountKey", "")
+    if not account_name or not account_key:
+        raise RuntimeError("storage account key is unavailable for LINE image URL")
+    service = BlobServiceClient.from_connection_string(connection_string)
+    image_id = uuid.uuid4().hex
+    extension = "png" if content_type == "image/png" else "jpg"
+    original_name = f"{LINE_GENERATED_PREFIX}{image_id}.{extension}"
+    preview_name = f"{LINE_GENERATED_PREFIX}{image_id}-preview.jpg"
+    original = service.get_blob_client(CONTAINER, original_name)
+    preview_blob = service.get_blob_client(CONTAINER, preview_name)
+    original.upload_blob(raw, content_settings=ContentSettings(content_type=content_type))
+    preview_blob.upload_blob(
+        preview_buffer.getvalue(), content_settings=ContentSettings(content_type="image/jpeg")
+    )
+    expiry = datetime.now(timezone.utc) + timedelta(hours=1)
+
+    def signed_url(blob_name: str, url: str) -> str:
+        sas = generate_blob_sas(
+            account_name=account_name,
+            container_name=CONTAINER,
+            blob_name=blob_name,
+            account_key=account_key,
+            permission=BlobSasPermissions(read=True),
+            expiry=expiry,
+        )
+        return f"{url}?{sas}"
+
+    return signed_url(original_name, original.url), signed_url(preview_name, preview_blob.url)

@@ -35,6 +35,69 @@ STATE = {
 
 
 class LineBotAnswerTests(unittest.TestCase):
+    def test_next_image_comic_request_is_one_shot(self):
+        history = [{"role": "user", "content": "小羽，把下一張照片轉成漫畫風格"}]
+        self.assertEqual(
+            "小羽，把下一張照片轉成漫畫風格",
+            line_bot.history_image_edit_request(history),
+        )
+        consumed = history + [{"role": "user", "content": "[使用者傳送一張圖片，要求影像生成／編輯]"}]
+        self.assertEqual("", line_bot.history_image_edit_request(consumed))
+        self.assertEqual("", line_bot.history_image_edit_request([
+            {"role": "user", "content": "下一張圖片請 OCR"}
+        ]))
+
+    @mock.patch("shared.inference_hub.request.urlopen")
+    @mock.patch.dict(
+        "os.environ",
+        {"INFERENCE_HUB_URL": "https://hub.test", "INFERENCE_HUB_TOKEN": "test-token"},
+        clear=True,
+    )
+    def test_image_edit_uses_dedicated_model_and_multipart_endpoint(self, urlopen):
+        output = BytesIO()
+        Image.new("RGB", (20, 40), "green").save(output, format="PNG")
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({
+            "data": [{"b64_json": __import__("base64").b64encode(output.getvalue()).decode()}]
+        }).encode()
+        urlopen.return_value = response
+        input_image = BytesIO()
+        Image.new("RGB", (20, 40), "black").save(input_image, format="JPEG")
+
+        raw, content_type = inference_hub.edit_image(
+            "data:image/jpeg;base64," + __import__("base64").b64encode(input_image.getvalue()).decode(),
+            "把下一張照片轉成漫畫風格",
+        )
+
+        self.assertEqual("image/png", content_type)
+        self.assertTrue(raw.startswith(b"\x89PNG"))
+        sent = urlopen.call_args.args[0]
+        self.assertEqual("https://hub.test/images/edits", sent.full_url)
+        self.assertIn(b'openai/openai/gpt-image-2', sent.data)
+        self.assertIn(b'1024x1536', sent.data)
+        self.assertIn("multipart/form-data", sent.headers["Content-type"])
+
+    @mock.patch("shared.line_bot.request.urlopen")
+    def test_reply_image_sends_text_and_line_image_message(self, urlopen):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b""
+        urlopen.return_value = response
+
+        line_bot.reply_image(
+            "reply-token",
+            "完成",
+            "https://storage.test/original.png?sas",
+            "https://storage.test/preview.jpg?sas",
+            "access-token",
+        )
+
+        payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertEqual(["text", "image"], [item["type"] for item in payload["messages"]])
+        self.assertEqual(
+            "https://storage.test/original.png?sas",
+            payload["messages"][1]["originalContentUrl"],
+        )
+
     def test_named_daily_performance_includes_scores(self):
         text = line_bot.answer("查詢阿力的本日戰績和對戰分數", STATE)
         self.assertIn("阿力 本日戰績", text)

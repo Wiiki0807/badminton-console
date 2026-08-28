@@ -139,6 +139,34 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
             memory_text = incoming_text
             if message_type == "image":
                 image_data_url = line_bot.get_message_image(str(message.get("id", "")), access_token)
+                edit_request = line_bot.history_image_edit_request(history)
+                if edit_request:
+                    try:
+                        generated, generated_type = inference_hub.edit_image(
+                            image_data_url, edit_request
+                        )
+                        original_url, preview_url = store.upload_line_generated_image(
+                            generated, generated_type
+                        )
+                        text = "🎨 小羽已依照你的要求完成圖片。"
+                        line_bot.reply_image(
+                            reply_token, text, original_url, preview_url, access_token
+                        )
+                        try:
+                            store.add_line_memory(
+                                conversation_id, "user", "[使用者傳送一張圖片，要求影像生成／編輯]"
+                            )
+                            store.add_line_memory(conversation_id, "assistant", text)
+                        except Exception:
+                            logging.exception("LINE memory write failed; generated image was still delivered")
+                    except Exception:
+                        logging.exception("LINE image generation failed")
+                        line_bot.reply(
+                            reply_token,
+                            "影像產生服務目前暫時失敗，請稍後再傳一次圖片。",
+                            access_token,
+                        )
+                    continue
                 ocr_requested = line_bot.history_requests_image_ocr(history)
                 incoming_text = line_bot.image_prompt(history)
                 if ocr_requested:

@@ -34,6 +34,12 @@ IMAGE_REQUEST_PATTERN = re.compile(r"(?:圖片|照片|圖中|截圖|相片)")
 NEXT_IMAGE_PATTERN = re.compile(
     r"(?:下一張|下張|接下來.{0,6}(?:圖片|照片|圖)|(?:等等|待會|等一下).{0,8}(?:傳|上傳).{0,4}(?:圖片|照片|圖))"
 )
+IMAGE_EDIT_INTENT_PATTERN = re.compile(
+    r"(?:轉成|改成|變成|畫成|做成|生成|產生|製作|風格化|重繪|修圖).{0,30}"
+    r"(?:漫畫|卡通|動畫|插畫|水彩|油畫|素描|風格|圖片|照片|圖)|"
+    r"(?:漫畫|卡通|動畫|插畫|水彩|油畫|素描).{0,30}(?:轉成|改成|變成|畫成|做成|生成|產生|製作|風格化|重繪)",
+    re.IGNORECASE,
+)
 BOT_WAKE_PATTERN = re.compile(
     r"^\s*@?(?:Rocket\s*AI|小羽)(?:\s|[，,：:、])*",
     re.IGNORECASE,
@@ -349,6 +355,25 @@ def should_handle_group_message(
     return False
 
 
+def history_image_edit_request(history: list[dict[str, str]]) -> str:
+    """Return a one-shot edit request that targets the next LINE image."""
+    for item in reversed(history):
+        if str(item.get("role", "")) != "user":
+            continue
+        text = str(item.get("content", "")).strip()
+        if text.startswith("[使用者傳送一張圖片"):
+            return ""
+        if (
+            text
+            and IMAGE_EDIT_INTENT_PATTERN.search(text)
+            and (NEXT_IMAGE_PATTERN.search(text) or IMAGE_REQUEST_PATTERN.search(text))
+            and not OCR_INTENT_PATTERN.search(text)
+        ):
+            return text[:1200]
+        return ""
+    return ""
+
+
 def answer(
     text: str,
     state: dict[str, Any],
@@ -600,3 +625,40 @@ def reply(reply_token: str, text: str, access_token: str) -> None:
     except error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"LINE reply failed ({exc.code}): {body}") from exc
+
+
+def reply_image(
+    reply_token: str,
+    text: str,
+    original_url: str,
+    preview_url: str,
+    access_token: str,
+) -> None:
+    if not original_url.startswith("https://") or not preview_url.startswith("https://"):
+        raise ValueError("LINE image URLs must use HTTPS")
+    payload = json.dumps(
+        {
+            "replyToken": reply_token,
+            "messages": [
+                {"type": "text", "text": text[:5000]},
+                {
+                    "type": "image",
+                    "originalContentUrl": original_url,
+                    "previewImageUrl": preview_url,
+                },
+            ],
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    req = request.Request(
+        LINE_REPLY_URL,
+        data=payload,
+        method="POST",
+        headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+    )
+    try:
+        with request.urlopen(req, timeout=8) as response:
+            response.read()
+    except error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"LINE image reply failed ({exc.code}): {body}") from exc
