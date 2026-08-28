@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 import azure.functions as func
 
@@ -13,12 +14,41 @@ from shared import line_bot
 from shared import inference_hub
 from shared import pdf_summary
 from shared import reminders
+from shared import daily_briefing
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 MAX_BODY_BYTES = 1_000_000
 # Browsers assume UTF-8 for JSON, but other clients fall back to ISO-8859-1 without this.
 JSON_CONTENT_TYPE = "application/json; charset=utf-8"
+DAILY_BRIEFING_EXECUTOR = ThreadPoolExecutor(max_workers=2)
+
+
+def _start_daily_briefing(source: dict, message_type: str) -> Future | None:
+    """Start the private user's daily briefing while their normal answer is generated."""
+    user_id = str(source.get("userId", "")).strip()
+    if message_type != "text" or not user_id or line_bot.is_group_source(source):
+        return None
+    return DAILY_BRIEFING_EXECUTOR.submit(daily_briefing.for_first_message, user_id)
+
+
+def _reply_with_daily_briefing(
+    reply_token: str,
+    text: str,
+    access_token: str,
+    briefing_future: Future | None,
+) -> None:
+    messages = [text]
+    if briefing_future is not None:
+        try:
+            briefing = str(briefing_future.result(timeout=35) or "").strip()
+            if briefing:
+                messages.append(briefing)
+        except FutureTimeoutError:
+            logging.warning("Daily briefing exceeded LINE reply wait budget")
+        except Exception:
+            logging.exception("Daily briefing failed; sending normal reply only")
+    line_bot.reply_texts(reply_token, messages, access_token)
 
 
 def json_response(value, status: int = 200, headers: dict[str, str] | None = None) -> func.HttpResponse:
@@ -127,9 +157,12 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                     continue
                 if message_type == "text" and line_bot.is_explicit_bot_wake(message):
                     incoming_text = line_bot.strip_bot_wake_text(message)
+            briefing_future = _start_daily_briefing(source, message_type)
             if message_type == "text" and line_bot.is_memory_reset(incoming_text):
                 store.clear_line_memory(conversation_id)
-                line_bot.reply(reply_token, "已清除這個對話最近的記憶。", access_token)
+                _reply_with_daily_briefing(
+                    reply_token, "已清除這個對話最近的記憶。", access_token, briefing_future
+                )
                 continue
             try:
                 line_bot.show_loading_animation(source, access_token, loading_seconds=25)
@@ -145,7 +178,9 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                 except ValueError as exc:
                     logging.warning("LINE reminder command rejected: %s", exc)
                     text = "提醒內容或時間無效；每位使用者最多可保留 50 筆未完成提醒。"
-                line_bot.reply(reply_token, text, access_token)
+                _reply_with_daily_briefing(
+                    reply_token, text, access_token, briefing_future
+                )
                 try:
                     store.add_line_memory(conversation_id, "user", incoming_text)
                     store.add_line_memory(conversation_id, "assistant", text)
@@ -182,7 +217,9 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                     incoming_text = line_bot.recent_image_question_prompt(incoming_text)
                 else:
                     text = "最近一張圖片已不存在或超過 24 小時，請重新傳送圖片。"
-                    line_bot.reply(reply_token, text, access_token)
+                    _reply_with_daily_briefing(
+                        reply_token, text, access_token, briefing_future
+                    )
                     try:
                         store.add_line_memory(conversation_id, "user", memory_text)
                         store.add_line_memory(conversation_id, "assistant", text)
@@ -239,7 +276,9 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                 history=history,
                 image_data_url=image_data_url,
             )
-            line_bot.reply(reply_token, text, access_token)
+            _reply_with_daily_briefing(
+                reply_token, text, access_token, briefing_future
+            )
             try:
                 store.add_line_memory(conversation_id, "user", memory_text)
                 store.add_line_memory(conversation_id, "assistant", text)

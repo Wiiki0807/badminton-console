@@ -35,6 +35,7 @@ EMPTY_STATE = {"courts": [], "recent": [], "stats": []}
 LINE_MEMORY_TABLE = "lineMemory"
 LINE_WEBHOOK_TABLE = "lineWebhookEvents"
 LINE_REMINDER_TABLE = "lineReminders"
+LINE_DAILY_BRIEFING_TABLE = "lineDailyBriefings"
 LINE_MEMORY_MAX_MESSAGES = 12
 LINE_MEMORY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 LINE_GENERATED_PREFIX = "line-generated/"
@@ -279,6 +280,63 @@ def claim_line_webhook_event(event_id: str) -> bool:
         return True
     except ResourceExistsError:
         return False
+
+
+def claim_line_daily_briefing(user_id: str, date_key: str) -> bool:
+    """Claim one private-chat briefing per user and Taipei calendar date."""
+    bounded_user = str(user_id or "").strip()
+    bounded_date = str(date_key or "").strip()[:10]
+    if not bounded_user or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", bounded_date):
+        return False
+    entity = {
+        "PartitionKey": hashlib.sha256(
+            f"line-daily-briefing:{bounded_user}".encode("utf-8")
+        ).hexdigest(),
+        "RowKey": bounded_date,
+        "createdAt": _epoch(now_ms()),
+    }
+    try:
+        with _table(LINE_DAILY_BRIEFING_TABLE) as table:
+            table.create_entity(entity)
+        return True
+    except ResourceExistsError:
+        return False
+
+
+def release_line_daily_briefing(user_id: str, date_key: str) -> None:
+    """Allow a later message to retry when briefing generation failed completely."""
+    partition = hashlib.sha256(
+        f"line-daily-briefing:{str(user_id or '').strip()}".encode("utf-8")
+    ).hexdigest()
+    try:
+        with _table(LINE_DAILY_BRIEFING_TABLE) as table:
+            table.delete_entity(partition, str(date_key or "")[:10])
+    except ResourceNotFoundError:
+        pass
+
+
+def load_line_daily_briefing(date_key: str) -> str:
+    """Load the shared, date-scoped digest so Tavily runs only once per day."""
+    try:
+        with _table(LINE_DAILY_BRIEFING_TABLE) as table:
+            row = table.get_entity("digest", str(date_key or "")[:10])
+        return str(row.get("content", ""))[:4500]
+    except ResourceNotFoundError:
+        return ""
+
+
+def save_line_daily_briefing(date_key: str, content: str) -> None:
+    bounded = str(content or "").strip()[:4500]
+    if not bounded:
+        raise ValueError("empty daily briefing")
+    entity = {
+        "PartitionKey": "digest",
+        "RowKey": str(date_key or "")[:10],
+        "content": bounded,
+        "createdAt": _epoch(now_ms()),
+    }
+    with _table(LINE_DAILY_BRIEFING_TABLE) as table:
+        table.upsert_entity(entity, mode=UpdateMode.REPLACE)
 
 
 def _reminder_partition(user_id: str) -> str:

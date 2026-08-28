@@ -31,6 +31,7 @@ jobs:
           INFERENCE_HUB_TIMEOUT_SECONDS: ${{ github.ref == 'refs/heads/main' && vars.LINE_INFERENCE_HUB_TIMEOUT_SECONDS || '' }}
           TAVILY_API_KEY: ${{ github.ref == 'refs/heads/main' && secrets.TAVILY_API_KEY || '' }}
           LINE_REMINDER_DISPATCH_TOKEN: ${{ github.ref == 'refs/heads/main' && secrets.LINE_REMINDER_DISPATCH_TOKEN || '' }}
+          DAILY_BRIEFING_LOCATION: ${{ github.ref == 'refs/heads/main' && vars.DAILY_BRIEFING_LOCATION || '新北市板橋區' }}
         run: |
           set -euo pipefail
           python api/inject_deployment_settings.py

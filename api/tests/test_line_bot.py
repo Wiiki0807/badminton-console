@@ -21,6 +21,7 @@ from shared import store
 from shared import pdf_summary
 from shared import github_reader
 from shared import reminders
+from shared import daily_briefing
 import function_app
 
 
@@ -41,6 +42,145 @@ STATE = {
 
 
 class LineBotAnswerTests(unittest.TestCase):
+    @mock.patch("shared.store._table")
+    def test_daily_briefing_claim_is_once_per_user_and_date(self, table_factory):
+        table = mock.MagicMock()
+        table.create_entity.side_effect = [None, store.ResourceExistsError("exists")]
+        table_factory.return_value.__enter__.return_value = table
+
+        first = store.claim_line_daily_briefing("U123", "2026-08-29")
+        second = store.claim_line_daily_briefing("U123", "2026-08-29")
+
+        self.assertTrue(first)
+        self.assertFalse(second)
+        entity = table.create_entity.call_args_list[0].args[0]
+        self.assertNotIn("U123", entity["PartitionKey"])
+        self.assertEqual("2026-08-29", entity["RowKey"])
+
+    @mock.patch("shared.daily_briefing.store.save_line_daily_briefing")
+    @mock.patch("shared.daily_briefing.build_today")
+    @mock.patch("shared.daily_briefing.store.load_line_daily_briefing", return_value="cached")
+    @mock.patch("shared.daily_briefing.store.claim_line_daily_briefing", return_value=True)
+    def test_daily_briefing_reuses_shared_daily_cache(
+        self, claim, load, build, save
+    ):
+        result = daily_briefing.for_first_message(
+            "U123", datetime(2026, 8, 29, 8, 0, tzinfo=timezone(timedelta(hours=8)))
+        )
+
+        self.assertEqual("cached", result)
+        claim.assert_called_once_with("U123", "2026-08-29")
+        load.assert_called_once_with("2026-08-29")
+        build.assert_not_called()
+        save.assert_not_called()
+
+    @mock.patch("shared.inference_hub._json_request")
+    def test_daily_weather_forecast_requests_banqiao_daily_fields(self, json_request):
+        json_request.side_effect = [
+            {"results": [{"name": "Banqiao", "admin2": "New Taipei City", "latitude": 25.0, "longitude": 121.4}]},
+            {"daily": {
+                "time": ["2026-08-29"], "weather_code": [61],
+                "temperature_2m_max": [31.2], "temperature_2m_min": [25.1],
+                "precipitation_probability_max": [70], "precipitation_sum": [4.5],
+            }},
+        ]
+
+        forecast = inference_hub.get_daily_weather_forecast("新北市板橋區")
+
+        self.assertEqual("小雨", forecast["weather"])
+        self.assertEqual(70, forecast["precipitation_probability_percent"])
+        self.assertIn("daily=weather_code", json_request.call_args_list[1].args[0])
+        self.assertIn("timezone=Asia%2FTaipei", json_request.call_args_list[1].args[0])
+
+    @mock.patch("shared.inference_hub._json_request")
+    @mock.patch.dict("os.environ", {"TAVILY_API_KEY": "tvly-test"}, clear=True)
+    def test_recent_news_search_uses_two_day_tavily_news_filter(self, json_request):
+        json_request.return_value = {"results": [{
+            "title": "NVIDIA update", "url": "https://example.com/news",
+            "content": "New AI system", "published_date": "2026-08-29",
+        }]}
+
+        rows = inference_hub.search_recent_news("NVIDIA AI", days=2, max_results=5)
+
+        self.assertEqual("https://example.com/news", rows[0]["url"])
+        payload = json_request.call_args.kwargs["payload"]
+        self.assertEqual("news", payload["topic"])
+        self.assertEqual(2, payload["days"])
+        self.assertEqual("basic", payload["search_depth"])
+        self.assertFalse(payload["include_raw_content"])
+
+    @mock.patch("shared.inference_hub._json_request")
+    @mock.patch.dict("os.environ", {"TAVILY_API_KEY": "tvly-test"}, clear=True)
+    def test_recent_news_search_accepts_strict_yesterday_today_dates(self, json_request):
+        json_request.return_value = {"results": []}
+
+        inference_hub.search_recent_news(
+            "AI robotics", start_date="2026-08-28", end_date="2026-08-30"
+        )
+
+        payload = json_request.call_args.kwargs["payload"]
+        self.assertEqual("2026-08-28", payload["start_date"])
+        self.assertEqual("2026-08-30", payload["end_date"])
+        self.assertNotIn("days", payload)
+
+    @mock.patch("shared.inference_hub.request.urlopen")
+    @mock.patch.dict(
+        "os.environ",
+        {"INFERENCE_HUB_URL": "https://hub.test", "INFERENCE_HUB_TOKEN": "token"},
+        clear=True,
+    )
+    def test_daily_news_summarizer_uses_fast_model_without_tools(self, urlopen):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({
+            "choices": [{"message": {"content": json.dumps({
+                "items": [{"index": 0, "summary": "繁體中文科技摘要"}]
+            }, ensure_ascii=False)}}]
+        }).encode("utf-8")
+        urlopen.return_value = response
+
+        summaries = inference_hub.summarize_recent_news([{
+            "title": "External title", "description": "untrusted snippet",
+            "url": "https://example.com/news",
+        }])
+
+        self.assertEqual("繁體中文科技摘要", summaries[0])
+        payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertEqual("openai/openai/gpt-4o-mini", payload["model"])
+        self.assertEqual([], payload["tool_names"])
+        self.assertIn("不可信資料", payload["messages"][0]["content"])
+
+    @mock.patch("shared.daily_briefing.inference_hub.summarize_recent_news")
+    @mock.patch("shared.daily_briefing._search_news")
+    @mock.patch("shared.daily_briefing._weather_line", return_value="🌦️ 板橋今日：小雨")
+    def test_daily_briefing_contains_weather_news_summaries_and_links(
+        self, _weather, search, summarize
+    ):
+        search.return_value = [{
+            "title": "NVIDIA 發表新技術", "url": "https://example.com/nvidia",
+            "description": "source snippet", "published_date": "2026-08-29",
+        }]
+        summarize.return_value = {0: "這是經過整理的繁體中文摘要。"}
+
+        result = daily_briefing.build_today("2026-08-29")
+
+        self.assertIn("板橋今日", result)
+        self.assertIn("NVIDIA／AI／機器人焦點", result)
+        self.assertIn("這是經過整理的繁體中文摘要", result)
+        self.assertIn("https://example.com/nvidia", result)
+
+    @mock.patch("shared.line_bot.request.urlopen")
+    def test_line_reply_can_send_normal_answer_and_daily_briefing(self, urlopen):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b"{}"
+        urlopen.return_value = response
+
+        line_bot.reply_texts("reply-token", ["原本回答", "每日情報"], "access-token")
+
+        sent = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertEqual(2, len(sent["messages"]))
+        self.assertEqual("原本回答", sent["messages"][0]["text"])
+        self.assertEqual("每日情報", sent["messages"][1]["text"])
+
     @mock.patch.dict("os.environ", {"INFERENCE_HUB_TOKEN": "hub-secret"}, clear=True)
     def test_reminder_dispatch_token_is_domain_separated_from_hub_token(self):
         derived = hmac.new(
