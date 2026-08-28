@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import json
+import base64
 import logging
 import os
 import re
+import uuid
+from io import BytesIO
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -13,6 +16,8 @@ from urllib import error, request
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
+from PIL import Image, UnidentifiedImageError
+
 DEFAULT_MODEL = "openai/openai/gpt-4o-mini"
 GROUP_CLASSIFIER_MODEL = "openai/openai/gpt-4o-mini"
 GROUP_CLASSIFIER_MIN_CONFIDENCE = 0.85
@@ -20,6 +25,9 @@ GROUP_CLASSIFIER_TIMEOUT_SECONDS = 5.0
 MAX_REPLY_CHARS = 4500
 MAX_DOCUMENT_CHARS = 18_000
 MAX_TOOL_CALLS = 4
+IMAGE_EDIT_MODEL = "openai/openai/gpt-image-2"
+MAX_IMAGE_EDIT_INPUT_BYTES = 6 * 1024 * 1024
+MAX_IMAGE_EDIT_OUTPUT_BYTES = 12 * 1024 * 1024
 TOOL_CALL_LIMITS = {"get_current_datetime": 1, "get_current_weather": 1, "web_search": 1}
 TERMINAL_TOOL_NAMES = {"get_current_weather", "web_search"}
 SETTINGS_FILE = Path(__file__).with_name("deployment_settings.json")
@@ -136,6 +144,95 @@ def token_matches(candidate: str) -> bool:
 
     expected = _setting("INFERENCE_HUB_TOKEN")
     return bool(expected and candidate and hmac.compare_digest(candidate, expected))
+
+
+def _multipart_body(fields: dict[str, str], image: bytes, content_type: str) -> tuple[bytes, str]:
+    boundary = "----RocketAI" + uuid.uuid4().hex
+    chunks: list[bytes] = []
+    for name, value in fields.items():
+        chunks.extend([
+            f"--{boundary}\r\n".encode(),
+            f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode(),
+            value.encode("utf-8"),
+            b"\r\n",
+        ])
+    chunks.extend([
+        f"--{boundary}\r\n".encode(),
+        b'Content-Disposition: form-data; name="image"; filename="input"\r\n',
+        f"Content-Type: {content_type}\r\n\r\n".encode(),
+        image,
+        b"\r\n",
+        f"--{boundary}--\r\n".encode(),
+    ])
+    return b"".join(chunks), boundary
+
+
+def edit_image(image_data_url: str, user_request: str) -> tuple[bytes, str]:
+    """Edit one LINE image through the secured GPT Image gateway."""
+    base_url = _setting("INFERENCE_HUB_URL").rstrip("/")
+    token = _setting("INFERENCE_HUB_TOKEN")
+    if not base_url or not token:
+        raise RuntimeError("Inference Hub is not configured")
+    match = re.fullmatch(
+        r"data:(image/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=\r\n]+)", image_data_url or ""
+    )
+    if not match:
+        raise ValueError("invalid image data")
+    try:
+        raw = base64.b64decode(match.group(2), validate=True)
+    except ValueError as exc:
+        raise ValueError("invalid image base64") from exc
+    if not raw or len(raw) > MAX_IMAGE_EDIT_INPUT_BYTES:
+        raise ValueError("image is empty or too large")
+    try:
+        with Image.open(BytesIO(raw)) as source:
+            width, height = source.size
+    except (UnidentifiedImageError, OSError) as exc:
+        raise ValueError("invalid image") from exc
+    ratio = width / max(1, height)
+    size = "1536x1024" if ratio > 1.2 else "1024x1536" if ratio < 0.83 else "1024x1024"
+    bounded_request = str(user_request or "").strip()[:1200]
+    if not bounded_request:
+        raise ValueError("missing image edit request")
+    prompt = (
+        "Edit the supplied image according to the user's request. Preserve the main person's identity, "
+        "pose, composition and important visual context unless explicitly asked otherwise. "
+        "Do not add unrelated text or logos. User request: " + bounded_request
+    )
+    body, boundary = _multipart_body(
+        {
+            "model": IMAGE_EDIT_MODEL,
+            "prompt": prompt,
+            "size": size,
+            "quality": "low",
+            "n": "1",
+        },
+        raw,
+        match.group(1),
+    )
+    req = request.Request(
+        f"{base_url}/images/edits",
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+    )
+    try:
+        with request.urlopen(req, timeout=150) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        encoded = str(((payload.get("data") or [{}])[0]).get("b64_json") or "")
+        output = base64.b64decode(encoded, validate=True)
+    except (error.HTTPError, error.URLError, TimeoutError, OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        raise RuntimeError("image generation failed") from exc
+    if not output or len(output) > MAX_IMAGE_EDIT_OUTPUT_BYTES:
+        raise RuntimeError("invalid generated image size")
+    if output.startswith(b"\x89PNG\r\n\x1a\n"):
+        return output, "image/png"
+    if output.startswith(b"\xff\xd8\xff"):
+        return output, "image/jpeg"
+    raise RuntimeError("unsupported generated image format")
 
 
 def _json_request(
