@@ -83,6 +83,28 @@ class LineBotAnswerTests(unittest.TestCase):
         self.assertIn("候選", prompt)
         self.assertFalse(line_bot.references_recent_image("今天天氣如何？", history))
 
+    def test_red_stamp_followup_crops_and_enlarges_requested_region(self):
+        source = Image.new("RGB", (1000, 800), "white")
+        for y in range(300, 380):
+            for x in range(420, 520):
+                source.putpixel((x, y), (190, 35, 35))
+        buffer = BytesIO()
+        source.save(buffer, format="JPEG", quality=95)
+        data_url = "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode()
+
+        focused = line_bot.focus_recent_image_region(
+            data_url, "圖片裡紅色印章的名字是？"
+        )
+
+        self.assertNotEqual(data_url, focused)
+        cropped = base64.b64decode(focused.split(",", 1)[1])
+        with Image.open(BytesIO(cropped)) as result:
+            self.assertEqual(1280, max(result.size))
+        self.assertEqual(
+            data_url,
+            line_bot.focus_recent_image_region(data_url, "請描述整張圖片"),
+        )
+
     @mock.patch("shared.store._table")
     def test_webhook_event_claim_is_atomic_and_duplicates_are_skipped(self, table_factory):
         table = mock.MagicMock()

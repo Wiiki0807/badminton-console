@@ -44,6 +44,10 @@ IMAGE_TEXT_DETAIL_PATTERN = re.compile(
     r"(?:\bocr\b|印章|文字|名字|姓名|寫著|寫什麼|讀出|辨識|識別|號碼|數字)",
     re.IGNORECASE,
 )
+RED_STAMP_PATTERN = re.compile(
+    r"(?:紅色|紅章).{0,8}(?:印章|章|名字|姓名|文字)|(?:印章|章).{0,8}(?:紅色|紅章)",
+    re.IGNORECASE,
+)
 IMAGE_EDIT_INTENT_PATTERN = re.compile(
     r"(?:轉成|改成|變成|畫成|做成|生成|產生|製作|風格化|重繪|修圖).{0,30}"
     r"(?:漫畫|卡通|動畫|插畫|水彩|油畫|素描|風格|圖片|照片|圖)|"
@@ -439,6 +443,61 @@ def recent_image_question_prompt(text: str) -> str:
         "請根據隨附的最近一張圖片回答這個追問：" + bounded
         + "\n不得聲稱沒有收到圖片；看不清楚的細節請明確說明。"
     )
+
+
+def focus_recent_image_region(image_data_url: str, question: str) -> str:
+    """Crop and enlarge a clearly requested red-stamp region for more reliable OCR."""
+    if not RED_STAMP_PATTERN.search(str(question or "")):
+        return image_data_url
+    match = re.fullmatch(
+        r"data:(image/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=\r\n]+)",
+        image_data_url or "",
+    )
+    if not match:
+        return image_data_url
+    try:
+        raw = base64.b64decode(match.group(2), validate=True)
+        with Image.open(BytesIO(raw)) as source:
+            image = ImageOps.exif_transpose(source).convert("RGB")
+        width, height = image.size
+        pixels = image.load()
+        left, top, right, bottom = width, height, -1, -1
+        matches = 0
+        # Recent LINE images are already bounded to 1280 px, so a direct scan
+        # remains small while preserving individual stamp strokes.
+        for y in range(height):
+            for x in range(width):
+                red, green, blue = pixels[x, y]
+                if red >= 115 and red >= green + 28 and red >= blue + 28:
+                    left, top = min(left, x), min(top, y)
+                    right, bottom = max(right, x), max(bottom, y)
+                    matches += 1
+        if matches < 30 or right <= left or bottom <= top:
+            return image_data_url
+        span_x, span_y = right - left + 1, bottom - top + 1
+        if span_x * span_y > width * height * 0.45:
+            return image_data_url
+        # Include surrounding printed text that may be crossed by the stamp.
+        pad_x = max(30, span_x)
+        pad_y = max(30, span_y)
+        box = (
+            max(0, left - pad_x),
+            max(0, top - pad_y),
+            min(width, right + pad_x + 1),
+            min(height, bottom + pad_y + 1),
+        )
+        region = image.crop(box)
+        scale = 1280 / max(region.size)
+        if scale > 1:
+            region = region.resize(
+                (max(1, round(region.width * scale)), max(1, round(region.height * scale))),
+                Image.Resampling.LANCZOS,
+            )
+        output = BytesIO()
+        region.save(output, format="JPEG", quality=92, optimize=True)
+        return "data:image/jpeg;base64," + base64.b64encode(output.getvalue()).decode("ascii")
+    except (ValueError, UnidentifiedImageError, OSError):
+        return image_data_url
 
 
 def answer(
