@@ -32,9 +32,28 @@ if (-not $Endpoint.StartsWith("https://") -or $Token.Length -lt 32) {
     throw "Provide the production HTTPS endpoint and either -Token or -HubEnvFile."
 }
 
-$encodedEndpoint = $Endpoint.Replace("'", "''")
-$encodedToken = $Token.Replace("'", "''")
-$argument = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$dispatchScript`" -Endpoint '$encodedEndpoint' -Token '$encodedToken'"
+$installDir = Join-Path $env:ProgramData "RocketAI"
+$installedScript = Join-Path $installDir "dispatch-line-reminders.ps1"
+$tokenFile = Join-Path $installDir "reminder-dispatch-token.txt"
+$logFile = Join-Path $installDir "reminder-dispatch.log"
+New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+Copy-Item -LiteralPath $dispatchScript -Destination $installedScript -Force
+Set-Content -LiteralPath $tokenFile -Value $Token -NoNewline
+
+$acl = [System.Security.AccessControl.FileSecurity]::new()
+$acl.SetAccessRuleProtection($true, $false)
+foreach ($sidValue in @("S-1-5-18", "S-1-5-32-544")) {
+    $sid = [System.Security.Principal.SecurityIdentifier]::new($sidValue)
+    $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+        $sid,
+        [System.Security.AccessControl.FileSystemRights]::FullControl,
+        [System.Security.AccessControl.AccessControlType]::Allow
+    )
+    $acl.AddAccessRule($rule)
+}
+Set-Acl -LiteralPath $tokenFile -AclObject $acl
+
+$argument = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$installedScript`" -Endpoint $Endpoint -TokenFile `"$tokenFile`" -LogFile `"$logFile`""
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $argument
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
     -RepetitionInterval (New-TimeSpan -Minutes 1) `
@@ -45,3 +64,4 @@ $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccou
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
     -Settings $settings -Principal $principal -Force | Out-Null
 Write-Output "Installed scheduled task: $TaskName"
+Write-Output "Dispatch log: $logFile"
