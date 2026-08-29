@@ -39,6 +39,9 @@ MARKET_REQUEST_RE = re.compile(
     r"(?:股價|股票報價|最新報價|收盤價|市場報價|stock prices?|market quotes?|quotes?.{0,12}(?:stock|ticker))",
     re.IGNORECASE,
 )
+MARKET_CHART_RE = re.compile(
+    r"(?:圖表|曲線圖|折線圖|走勢圖|趨勢圖|chart|line\s*chart|plot)", re.IGNORECASE
+)
 NEWS_JSON_INSTRUCTION = """
 
 LINE 顯示契約：完成 verified-news-digest 搜尋與交叉查證後，只輸出一個 JSON 物件，
@@ -55,11 +58,12 @@ MARKET_JSON_INSTRUCTION = """
 LINE 顯示契約：查找使用者指定股票在最近一個已完成交易時段的可靠報價，並只輸出一個 JSON 物件；
 不要 Markdown、不要 code fence、不要前後說明。格式：
 {"type":"market_snapshot","title":"美股收盤","market":"US","asOf":"含時區的資料日期時間",
-"session":"美東收盤","quotes":[{"name":"公司名稱","symbol":"NVDA","price":123.45,
+"session":"美東收盤","chartRequested":false,"quotes":[{"date":"YYYY-MM-DD","name":"公司名稱","symbol":"NVDA","price":123.45,
 "change":1.23,"changePercent":1.01,"currency":"USD","open":122.0,"high":125.0,
 "low":121.0,"volume":12345678,"sourceUrl":"https://直接支持該報價的來源"}]}
 price、change、changePercent 必須是 JSON 數字；open/high/low/volume 查不到時可為 null。
-最多八檔並維持使用者順序。不可把搜尋摘要或模型記憶當即時報價；必須核對交易日期、時段、幣別，
+每個交易日／股票各用一筆 quote，date 必須是實際交易日；最近 N 天是最近 N 個已完成交易日，不是日曆日。
+最多三十筆並依日期由舊到新排列。不可把搜尋摘要或模型記憶當即時報價；必須核對交易日期、時段、幣別，
 且每檔提供實際讀取、直接支持數字的 HTTPS 來源。若市場尚未開盤，使用最近完成的交易時段並清楚標示 asOf/session。
 """.strip()
 
@@ -138,7 +142,12 @@ def _callback(url: str, payload: dict[str, Any]) -> None:
 
 def _news_task_message(text: str) -> str:
     if MARKET_REQUEST_RE.search(text):
-        return f"{text}\n\n{MARKET_JSON_INSTRUCTION}"
+        chart_rule = (
+            "使用者明確要求圖表，所以 chartRequested 必須是 true。"
+            if MARKET_CHART_RE.search(text)
+            else "使用者沒有明確要求圖表，所以 chartRequested 必須是 false。"
+        )
+        return f"{text}\n\n{MARKET_JSON_INSTRUCTION}\n{chart_rule}"
     return f"{text}\n\n{NEWS_JSON_INSTRUCTION}" if NEWS_REQUEST_RE.search(text) else text
 
 
@@ -176,6 +185,7 @@ def _parse_market_snapshot(text: str) -> dict[str, Any] | None:
 
 def _run_agent(task_id: str, text: str, callback_url: str) -> None:
     try:
+        market_chart_requested = bool(MARKET_CHART_RE.search(text))
         if re.search(r"Robot Voice Hub.{0,20}(?:狀態|在線|線上)", text, re.IGNORECASE):
             text = (
                 "安全約束：只可呼叫 exec，且 command 必須完全是 "
@@ -201,6 +211,7 @@ def _run_agent(task_id: str, text: str, callback_url: str) -> None:
         digest = _parse_news_digest(visible)
         snapshot = _parse_market_snapshot(visible)
         if snapshot:
+            snapshot["chartRequested"] = market_chart_requested
             payload["marketSnapshot"] = snapshot
         elif digest:
             payload["newsDigest"] = digest

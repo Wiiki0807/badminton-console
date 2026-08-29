@@ -962,7 +962,9 @@ def push_news_digest(
     )
 
 
-def market_snapshot_flex(task_id: str, snapshot: dict[str, Any]) -> dict[str, Any]:
+def market_snapshot_flex(
+    task_id: str, snapshot: dict[str, Any], chart_url: str = ""
+) -> dict[str, Any]:
     """Build one compact, table-like Flex Bubble for a market snapshot."""
     contents: list[dict[str, Any]] = [
         {"type": "text", "text": snapshot["title"], "weight": "bold", "size": "lg", "wrap": True},
@@ -974,14 +976,16 @@ def market_snapshot_flex(task_id: str, snapshot: dict[str, Any]) -> dict[str, An
             "wrap": True, "margin": "xs",
         })
     contents.append({"type": "separator", "margin": "md"})
-    for quote in snapshot["quotes"]:
+    dated_series = sum(bool(quote.get("date")) for quote in snapshot["quotes"]) > 1
+    for quote in snapshot["quotes"][:12]:
         percent = quote["changePercent"]
         arrow = "▲" if percent > 0 else "▼" if percent < 0 else "—"
         color = "#D32F2F" if percent > 0 else "#2E7D32" if percent < 0 else "#666666"
         currency_prefix = "$" if quote["currency"] == "USD" else f"{quote['currency']} "
         contents.append({
             "type": "box", "layout": "horizontal", "margin": "md", "contents": [
-                {"type": "text", "text": quote["symbol"], "size": "sm", "weight": "bold", "flex": 3},
+                {"type": "text", "text": quote.get("date", "")[5:] if dated_series else quote["symbol"],
+                 "size": "sm", "weight": "bold", "flex": 3},
                 {"type": "text", "text": f"{currency_prefix}{quote['price']:,.2f}",
                  "size": "sm", "align": "end", "flex": 4},
                 {"type": "text", "text": f"{arrow} {abs(percent):.2f}%", "size": "sm",
@@ -993,34 +997,41 @@ def market_snapshot_flex(task_id: str, snapshot: dict[str, Any]) -> dict[str, An
         {"type": "text", "text": "價格可能延遲，請以來源市場為準", "size": "xxs",
          "color": "#999999", "wrap": True, "margin": "md"},
     ])
+    bubble: dict[str, Any] = {
+        "type": "bubble", "size": "mega",
+        "body": {"type": "box", "layout": "vertical", "contents": contents},
+        "footer": {
+            "type": "box", "layout": "horizontal", "spacing": "sm", "contents": [
+                {"type": "button", "style": "primary", "height": "sm", "color": "#2E7D32",
+                 "action": {"type": "postback", "label": "更新報價", "displayText": "更新這組股票報價",
+                            "data": f"action=market_refresh&task={task_id}"}},
+                {"type": "button", "style": "secondary", "height": "sm",
+                 "action": {"type": "postback", "label": "查看詳情", "displayText": "查看股價詳細資料",
+                            "data": f"action=market_details&task={task_id}"}},
+            ],
+        },
+    }
+    if chart_url.startswith("https://"):
+        bubble["hero"] = {
+            "type": "image", "url": chart_url, "size": "full",
+            "aspectRatio": "20:11", "aspectMode": "fit", "backgroundColor": "#FFFFFF",
+        }
     return {
         "type": "flex",
-        "altText": f"{snapshot['title']}：{len(snapshot['quotes'])} 檔報價"[:400],
-        "contents": {
-            "type": "bubble", "size": "mega",
-            "body": {"type": "box", "layout": "vertical", "contents": contents},
-            "footer": {
-                "type": "box", "layout": "horizontal", "spacing": "sm", "contents": [
-                    {"type": "button", "style": "primary", "height": "sm", "color": "#2E7D32",
-                     "action": {"type": "postback", "label": "更新報價", "displayText": "更新這組股票報價",
-                                "data": f"action=market_refresh&task={task_id}"}},
-                    {"type": "button", "style": "secondary", "height": "sm",
-                     "action": {"type": "postback", "label": "查看詳情", "displayText": "查看股價詳細資料",
-                                "data": f"action=market_details&task={task_id}"}},
-                ],
-            },
-        },
+        "altText": f"{snapshot['title']}：{len(snapshot['quotes'])} 筆報價"[:400],
+        "contents": bubble,
     }
 
 
 def push_market_snapshot(
-    target_id: str, task_id: str, snapshot: dict[str, Any], access_token: str
+    target_id: str, task_id: str, snapshot: dict[str, Any], access_token: str,
+    chart_url: str = "",
 ) -> None:
     if not target_id:
         raise ValueError("missing LINE push target")
     _send_messages(
         LINE_PUSH_URL,
-        {"to": target_id, "messages": [market_snapshot_flex(task_id, snapshot)]},
+        {"to": target_id, "messages": [market_snapshot_flex(task_id, snapshot, chart_url)]},
         access_token,
         retry_key=task_id,
     )

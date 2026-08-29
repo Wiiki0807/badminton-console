@@ -14,7 +14,14 @@ class NewsBridgeTests(unittest.TestCase):
     def test_market_request_gets_market_contract(self):
         result = bridge._news_task_message("查詢 MSFT NVDA 最新股價")
         self.assertIn('"type":"market_snapshot"', result)
+        self.assertIn('"date":"YYYY-MM-DD"', result)
+        self.assertIn("chartRequested 必須是 false", result)
         self.assertNotIn('"type":"verified_news_digest"', result)
+
+    def test_market_chart_request_requires_structured_chart_data(self):
+        result = bridge._news_task_message("查詢 NVDA 最近五個交易日股價並產出曲線圖")
+        self.assertIn("chartRequested 必須是 true", result)
+        self.assertIn("最近 N 個已完成交易日", result)
 
     def test_parses_raw_or_fenced_digest(self):
         raw = '{"type":"verified_news_digest","items":[{"title":"A"}]}'
