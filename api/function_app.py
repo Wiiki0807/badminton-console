@@ -8,6 +8,7 @@ import logging
 import os
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from urllib.parse import parse_qs
 
 import azure.functions as func
 
@@ -18,6 +19,7 @@ from shared import pdf_summary
 from shared import reminders
 from shared import daily_briefing
 from shared import line_openclaw
+from shared import news_digest
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
@@ -135,6 +137,28 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
     for event in body.get("events") or []:
         message = event.get("message") or {}
         reply_token = event.get("replyToken", "")
+        if event.get("type") == "postback" and reply_token:
+            try:
+                if not store.claim_line_webhook_event(str(event.get("webhookEventId", ""))):
+                    continue
+                source = event.get("source") or {}
+                values = parse_qs(str((event.get("postback") or {}).get("data", "")))
+                if values.get("action") != ["news_detail"]:
+                    continue
+                task_id = str(uuid.UUID(values.get("task", [""])[0]))
+                item_index = int(values.get("item", ["-1"])[0])
+                item = store.get_line_openclaw_news_item(
+                    task_id, str(source.get("userId", "")), item_index
+                )
+                if item:
+                    line_bot.reply(reply_token, news_digest.detail_text(item), access_token)
+                else:
+                    line_bot.reply(reply_token, "這則摘要不存在、已過期，或不屬於你的帳號。", access_token)
+            except (ValueError, TypeError):
+                logging.warning("Rejected malformed LINE news-detail postback")
+            except Exception:
+                logging.exception("LINE news-detail postback failed")
+            continue
         message_type = message.get("type")
         if event.get("type") != "message" or message_type not in {"text", "image", "file"} or not reply_token:
             continue
@@ -379,12 +403,25 @@ def line_openclaw_callback(req: func.HttpRequest) -> func.HttpResponse:
         status = str(body.get("status", "failed"))
         result_text = str(body.get("text", "任務沒有輸出"))[:4500]
         prefix = "✅ OpenClaw 任務完成" if status == "completed" else "⚠️ OpenClaw 任務失敗"
-        line_bot.push_text(
-            str(row.get("targetId", "")),
-            f"{prefix} {task_id[:8]}\n\n{result_text}",
-            access_token,
-            retry_key=task_id,
-        )
+        digest = news_digest.validate(body.get("newsDigest")) if status == "completed" else None
+        if digest:
+            store.save_line_openclaw_news_digest(task_id, digest)
+            try:
+                line_bot.push_news_digest(
+                    str(row.get("targetId", "")), task_id, digest, access_token
+                )
+            except Exception:
+                logging.exception("LINE Flex news digest failed; falling back to text")
+                line_bot.push_text(
+                    str(row.get("targetId", "")), news_digest.fallback_text(digest), access_token
+                )
+        else:
+            line_bot.push_text(
+                str(row.get("targetId", "")),
+                f"{prefix} {task_id[:8]}\n\n{result_text}",
+                access_token,
+                retry_key=task_id,
+            )
         store.finish_line_openclaw_task(task_id, status)
         return json_response({"ok": True})
     except ValueError:

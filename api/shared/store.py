@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import base64
 import hashlib
+import hmac
 import os
 import re
 import time
@@ -104,6 +105,31 @@ def finish_line_openclaw_task(task_id: str, status: str) -> None:
             "PartitionKey": "task", "RowKey": task_id,
             "status": status[:20], "updatedAt": _epoch(now_ms()),
         }, mode=UpdateMode.MERGE)
+
+
+def save_line_openclaw_news_digest(task_id: str, digest: dict[str, Any]) -> None:
+    payload = json.dumps(digest, ensure_ascii=False, separators=(",", ":"))
+    if len(payload.encode("utf-8")) > 48 * 1024:
+        raise ValueError("news digest is too large")
+    with _table(LINE_OPENCLAW_TASK_TABLE) as table:
+        table.update_entity({
+            "PartitionKey": "task", "RowKey": task_id,
+            "newsDigestJson": payload, "updatedAt": _epoch(now_ms()),
+        }, mode=UpdateMode.MERGE)
+
+
+def get_line_openclaw_news_item(
+    task_id: str, target_id: str, item_index: int
+) -> dict[str, Any] | None:
+    row = get_line_openclaw_task(task_id)
+    if not row or not hmac.compare_digest(str(row.get("targetId", "")), target_id):
+        return None
+    try:
+        digest = json.loads(str(row.get("newsDigestJson", "")))
+        items = digest.get("items") or []
+        return dict(items[item_index]) if 0 <= item_index < len(items) else None
+    except (json.JSONDecodeError, TypeError, ValueError, IndexError):
+        return None
 
 
 def _epoch(value: int) -> EntityProperty:
