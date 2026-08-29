@@ -84,7 +84,7 @@ def _callback(url: str, payload: dict[str, Any]) -> None:
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         method="POST",
         headers={
-            "Authorization": f"Bearer {_env('OPENCLAW_LINE_CALLBACK_TOKEN')}",
+            "x-line-openclaw-token": _env("OPENCLAW_LINE_CALLBACK_TOKEN"),
             "Content-Type": "application/json",
         },
     )
@@ -157,9 +157,9 @@ def schedule_reminder(body: dict[str, Any]) -> dict[str, Any]:
     result = _openclaw(
         "cron", "add", "--name", f"line-reminder-{reminder_id[:8]}",
         "--at", due_at,
-        "--command", f"/usr/bin/printf LINE_REMINDER_{reminder_id}",
+        "--command", f"/home/tommywu/.openclaw/azure_callback.py reminder {callback_url}",
         "--declaration-key", f"line-reminder-{reminder_id}",
-        "--delete-after-run", "--webhook", callback_url, "--json",
+        "--delete-after-run", "--no-deliver", "--json",
     )
     return {"ok": True, "jobId": str((result.get("job") or {}).get("id", ""))}
 
