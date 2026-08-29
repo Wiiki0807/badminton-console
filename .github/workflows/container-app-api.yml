@@ -67,7 +67,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    environment: production
     concurrency:
       group: badminton-container-app-production
       cancel-in-progress: false
