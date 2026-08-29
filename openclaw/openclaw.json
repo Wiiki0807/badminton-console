@@ -1,0 +1,88 @@
+{
+  "agents": {
+    "defaults": {
+      "workspace": "/home/tommywu/.openclaw/workspace",
+      "model": {
+        "primary": "nv-infer/azure/openai/gpt-5.6-sol",
+        "fallbacks": ["nv-infer/openai/openai/gpt-4o-mini"]
+      },
+      "timeoutSeconds": 3600
+    }
+  },
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "nv-infer": {
+        "baseUrl": "http://100.94.194.108:8790",
+        "apiKey": {
+          "source": "env",
+          "provider": "default",
+          "id": "NV_INFER_HUB_TOKEN"
+        },
+        "api": "openai-completions",
+        "authHeader": true,
+        "timeoutSeconds": 300,
+        "models": [
+          {
+            "id": "azure/openai/gpt-5.6-sol",
+            "name": "GPT-5.6 Sol via nv_infer_hub",
+            "reasoning": true,
+            "input": ["text", "image"],
+            "contextWindow": 200000,
+            "maxTokens": 16384
+          },
+          {
+            "id": "openai/openai/gpt-4o-mini",
+            "name": "GPT-4o mini via nv_infer_hub",
+            "reasoning": false,
+            "input": ["text"],
+            "contextWindow": 128000,
+            "maxTokens": 8192
+          }
+        ]
+      }
+    }
+  },
+  "gateway": {
+    "mode": "local",
+    "port": 18789,
+    "bind": "loopback",
+    "auth": {
+      "mode": "token",
+      "token": {
+        "source": "env",
+        "provider": "default",
+        "id": "OPENCLAW_GATEWAY_TOKEN"
+      }
+    },
+    "controlUi": {
+      "enabled": false
+    }
+  },
+  "hooks": {
+    "enabled": true,
+    "token": "${OPENCLAW_HOOK_TOKEN}",
+    "path": "/hooks",
+    "allowedAgentIds": ["main"],
+    "allowRequestSessionKey": false
+  },
+  "cron": {
+    "enabled": true,
+    "webhookToken": "${OPENCLAW_LINE_CALLBACK_TOKEN}",
+    "sessionRetention": "24h"
+  },
+  "tools": {
+    "exec": {
+      "host": "gateway",
+      "mode": "allowlist",
+      "strictInlineEval": true,
+      "timeoutSec": 1800,
+      "notifyOnExit": true
+    }
+  },
+  "commands": {
+    "restart": false,
+    "config": false,
+    "plugins": false
+  }
+}

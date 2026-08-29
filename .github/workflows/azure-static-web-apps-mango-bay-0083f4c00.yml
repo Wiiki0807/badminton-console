@@ -32,6 +32,9 @@ jobs:
           TAVILY_API_KEY: ${{ github.ref == 'refs/heads/main' && secrets.TAVILY_API_KEY || '' }}
           LINE_REMINDER_DISPATCH_TOKEN: ${{ github.ref == 'refs/heads/main' && secrets.LINE_REMINDER_DISPATCH_TOKEN || '' }}
           DAILY_BRIEFING_LOCATION: ${{ github.ref == 'refs/heads/main' && vars.DAILY_BRIEFING_LOCATION || '新北市板橋區' }}
+          LINE_OPENCLAW_CALLBACK_URL: ${{ github.ref == 'refs/heads/main' && vars.LINE_OPENCLAW_CALLBACK_URL || '' }}
+          LINE_OPENCLAW_REMINDER_CALLBACK_URL: ${{ github.ref == 'refs/heads/main' && vars.LINE_OPENCLAW_REMINDER_CALLBACK_URL || '' }}
+          LINE_OPENCLAW_CALLBACK_TOKEN: ${{ github.ref == 'refs/heads/main' && secrets.LINE_OPENCLAW_CALLBACK_TOKEN || '' }}
         run: |
           set -euo pipefail
           python api/inject_deployment_settings.py

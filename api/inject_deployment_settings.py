@@ -36,6 +36,14 @@ def inject_settings(env: Mapping[str, str] = os.environ, target: Path = TARGET) 
     briefing_location = env.get("DAILY_BRIEFING_LOCATION", "").strip()
     if briefing_location:
         settings["DAILY_BRIEFING_LOCATION"] = briefing_location
+    for name in (
+        "LINE_OPENCLAW_CALLBACK_URL",
+        "LINE_OPENCLAW_REMINDER_CALLBACK_URL",
+        "LINE_OPENCLAW_CALLBACK_TOKEN",
+    ):
+        value = env.get(name, "").strip()
+        if value:
+            settings[name] = value
     target.write_text(json.dumps(settings, ensure_ascii=False), encoding="utf-8")
     print("Inference Hub deployment settings injected")
     return True

@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import logging
 import os
+import uuid
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 import azure.functions as func
@@ -15,6 +17,7 @@ from shared import inference_hub
 from shared import pdf_summary
 from shared import reminders
 from shared import daily_briefing
+from shared import line_openclaw
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
@@ -164,6 +167,36 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                     reply_token, "已清除這個對話最近的記憶。", access_token, briefing_future
                 )
                 continue
+            openclaw_command = (
+                line_openclaw.parse_command(incoming_text)
+                if message_type == "text" and not line_bot.is_group_source(source)
+                else None
+            )
+            if openclaw_command:
+                user_id = str(source.get("userId", ""))
+                try:
+                    if openclaw_command["action"] == "pair":
+                        line_openclaw.pair(user_id, openclaw_command["code"])
+                        text = "🔐 OpenClaw 已和你的 LINE ID 安全配對。"
+                    else:
+                        task_id = str(uuid.uuid4())
+                        store.create_line_openclaw_task(
+                            task_id, user_id, openclaw_command["text"]
+                        )
+                        line_openclaw.submit_task(
+                            user_id, openclaw_command["text"], task_id=task_id
+                        )
+                        text = (
+                            f"🦞 OpenClaw 已接受長任務 {task_id[:8]}。\n"
+                            "完成後小羽會主動通知你。"
+                        )
+                except PermissionError:
+                    text = "這個 OpenClaw 指令只允許已配對的主人使用。"
+                except Exception:
+                    logging.exception("LINE OpenClaw command failed")
+                    text = "OpenClaw 目前無法接受任務，請稍後再試。"
+                _reply_with_daily_briefing(reply_token, text, access_token, briefing_future)
+                continue
             try:
                 line_bot.show_loading_animation(source, access_token, loading_seconds=25)
             except Exception:
@@ -175,9 +208,9 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                         str(source.get("userId", "")),
                         history=[] if line_bot.is_group_source(source) else history,
                     ) or "目前無法辨識提醒指令。"
-                except ValueError as exc:
+                except (ValueError, RuntimeError) as exc:
                     logging.warning("LINE reminder command rejected: %s", exc)
-                    text = "提醒內容或時間無效；每位使用者最多可保留 50 筆未完成提醒。"
+                    text = "提醒內容、時間或 OpenClaw 排程服務暫時無效，請稍後再試。"
                 _reply_with_daily_briefing(
                     reply_token, text, access_token, briefing_future
                 )
@@ -295,7 +328,13 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
 def line_reminders_dispatch(req: func.HttpRequest) -> func.HttpResponse:
     """Lease due reminders and deliver idempotent LINE Push messages."""
     candidate = req.headers.get("x-line-reminder-token", "").strip()
-    if not inference_hub.reminder_dispatch_token_matches(candidate):
+    callback_candidate = req.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    callback_expected = inference_hub._setting("LINE_OPENCLAW_CALLBACK_TOKEN")
+    callback_ok = bool(
+        callback_expected and callback_candidate
+        and hmac.compare_digest(callback_candidate, callback_expected)
+    )
+    if not inference_hub.reminder_dispatch_token_matches(candidate) and not callback_ok:
         return json_response({"error": "unauthorized"}, 401)
     access_token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
     if not access_token:
@@ -324,6 +363,40 @@ def line_reminders_dispatch(req: func.HttpRequest) -> func.HttpResponse:
                 logging.exception("LINE reminder failure state update failed")
             failed += 1
     return json_response({"ok": True, "claimed": len(claimed), "sent": sent, "failed": failed})
+
+
+@app.route(route="line-openclaw-callback", methods=["POST"])
+def line_openclaw_callback(req: func.HttpRequest) -> func.HttpResponse:
+    """Receive one authenticated long-task completion and Push it to its owner."""
+    supplied = req.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    expected = inference_hub._setting("LINE_OPENCLAW_CALLBACK_TOKEN")
+    if not expected or not supplied or not hmac.compare_digest(supplied, expected):
+        return json_response({"error": "unauthorized"}, 401)
+    access_token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    if not access_token:
+        return json_response({"error": "LINE 尚未完成設定"}, 503)
+    try:
+        body = read_body(req)
+        task_id = str(body.get("taskId", ""))
+        row = store.get_line_openclaw_task(task_id)
+        if not row:
+            return json_response({"error": "unknown task"}, 404)
+        status = str(body.get("status", "failed"))
+        result_text = str(body.get("text", "任務沒有輸出"))[:4500]
+        prefix = "✅ OpenClaw 任務完成" if status == "completed" else "⚠️ OpenClaw 任務失敗"
+        line_bot.push_text(
+            str(row.get("targetId", "")),
+            f"{prefix} {task_id[:8]}\n\n{result_text}",
+            access_token,
+            retry_key=task_id,
+        )
+        store.finish_line_openclaw_task(task_id, status)
+        return json_response({"ok": True})
+    except ValueError:
+        return json_response({"error": "invalid body"}, 400)
+    except Exception:
+        logging.exception("LINE OpenClaw completion callback failed")
+        return json_response({"error": "callback failed"}, 502)
 
 
 @app.route(route="line-inference-smoke", methods=["POST"])
