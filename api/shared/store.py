@@ -41,6 +41,7 @@ LINE_OPENCLAW_TASK_TABLE = "lineOpenClawTasks"
 LINE_MEMORY_MAX_MESSAGES = 12
 LINE_MEMORY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 LINE_GENERATED_PREFIX = "line-generated/"
+LINE_ARTIFACT_PREFIX = "line-artifacts/"
 LINE_RECENT_IMAGE_PREFIX = "line-recent-image/"
 LINE_RECENT_IMAGE_RETENTION = timedelta(hours=24)
 MAX_LINE_RECENT_IMAGE_BYTES = 6 * 1024 * 1024
@@ -714,3 +715,50 @@ def upload_line_generated_image(raw: bytes, content_type: str) -> tuple[str, str
         return f"{url}?{sas}"
 
     return signed_url(original_name, original.url), signed_url(preview_name, preview_blob.url)
+
+
+def upload_line_artifact(raw: bytes, filename: str, content_type: str) -> str:
+    """Upload one bounded OpenClaw artifact and return a 24-hour download URL."""
+    if not raw or len(raw) > 512 * 1024:
+        raise ValueError("invalid artifact size")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._ -]{0,119}", filename or ""):
+        raise ValueError("invalid artifact filename")
+    allowed_types = {
+        "application/json", "application/pdf", "application/zip",
+        "application/javascript", "application/octet-stream",
+        "application/x-powershell", "application/x-sh", "application/x-yaml",
+        "text/css", "text/csv", "text/html", "text/javascript", "text/markdown",
+        "text/plain", "text/x-python", "text/yaml",
+    }
+    if content_type not in allowed_types:
+        content_type = "application/octet-stream"
+    connection_string = _connection_string()
+    settings = {
+        key.strip(): value.strip()
+        for item in connection_string.split(";") if "=" in item
+        for key, value in [item.split("=", 1)]
+    }
+    account_name = settings.get("AccountName", "")
+    account_key = settings.get("AccountKey", "")
+    if not account_name or not account_key:
+        raise RuntimeError("storage account key is unavailable for LINE artifact URL")
+    blob_name = f"{LINE_ARTIFACT_PREFIX}{uuid.uuid4().hex}/{filename}"
+    blob = BlobServiceClient.from_connection_string(connection_string).get_blob_client(
+        CONTAINER, blob_name
+    )
+    blob.upload_blob(
+        raw,
+        content_settings=ContentSettings(
+            content_type=content_type,
+            content_disposition=f'attachment; filename="{filename}"',
+        ),
+    )
+    sas = generate_blob_sas(
+        account_name=account_name,
+        container_name=CONTAINER,
+        blob_name=blob_name,
+        account_key=account_key,
+        permission=BlobSasPermissions(read=True),
+        expiry=datetime.now(timezone.utc) + timedelta(hours=24),
+    )
+    return f"{blob.url}?{sas}"

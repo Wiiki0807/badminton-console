@@ -6,9 +6,11 @@ owner pairing/agent tasks and structured reminder scheduling operations.
 from __future__ import annotations
 
 import argparse
+import base64
 import hmac
 import json
 import logging
+import mimetypes
 import os
 from pathlib import Path
 import re
@@ -30,6 +32,21 @@ OPENCLAW_ENTRY = (
 )
 MAX_BODY = 64 * 1024
 MAX_TASK_CHARS = 8_000
+MAX_ARTIFACT_BYTES = 512 * 1024
+WORKSPACE_DIR = Path(
+    os.environ.get("OPENCLAW_WORKSPACE_DIR", str(STATE_DIR / "workspace"))
+)
+MEDIA_RE = re.compile(
+    r"MEDIA:\s*((?:/|[A-Za-z]:[\\/])[^\r\n)]+)", re.IGNORECASE
+)
+ALLOWED_ARTIFACT_SUFFIXES = {
+    ".csv", ".css", ".html", ".js", ".json", ".md", ".pdf", ".ps1",
+    ".py", ".sh", ".ts", ".txt", ".yaml", ".yml", ".zip",
+}
+SENSITIVE_ARTIFACT_RE = re.compile(
+    r"(?:^|[._-])(?:\.env|credentials?|private|secrets?|tokens?|id_rsa)(?:$|[._-])",
+    re.IGNORECASE,
+)
 CALLBACK_RE = re.compile(r"https://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]{1,1800}\Z")
 NEWS_REQUEST_RE = re.compile(
     r"(?:新聞|最新消息|近期消息|產業動態|news|headlines?|company updates?)",
@@ -183,6 +200,40 @@ def _parse_market_snapshot(text: str) -> dict[str, Any] | None:
     return value
 
 
+def _extract_artifact(text: str) -> tuple[dict[str, Any] | None, str]:
+    """Read one bounded, non-sensitive OpenClaw MEDIA file from its workspace."""
+    match = MEDIA_RE.search(text)
+    if not match:
+        return None, text
+    cleaned = MEDIA_RE.sub("", text).replace("()", "").strip()
+    try:
+        workspace = WORKSPACE_DIR.resolve(strict=True)
+        candidate = Path(match.group(1).strip(" \t`'\"")).resolve(strict=True)
+        if not candidate.is_relative_to(workspace) or not candidate.is_file():
+            raise ValueError("artifact is outside the OpenClaw workspace")
+        if candidate.suffix.lower() not in ALLOWED_ARTIFACT_SUFFIXES:
+            raise ValueError("artifact type is not allowed")
+        if SENSITIVE_ARTIFACT_RE.search(candidate.name):
+            raise ValueError("sensitive artifact name is not allowed")
+        size = candidate.stat().st_size
+        if not 1 <= size <= MAX_ARTIFACT_BYTES:
+            raise ValueError("artifact size is outside the allowed range")
+        raw = candidate.read_bytes()
+        content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+        return {
+            "name": candidate.name,
+            "contentType": content_type,
+            "size": size,
+            "base64": base64.b64encode(raw).decode("ascii"),
+        }, cleaned
+    except ValueError as exc:
+        logging.warning("Rejected OpenClaw MEDIA artifact: %s", exc)
+        return None, cleaned + "\n\n檔案已產生，但無法安全附加到 LINE。"
+    except OSError:
+        logging.exception("Unable to read OpenClaw MEDIA artifact")
+        return None, cleaned + "\n\n檔案已產生，但無法安全附加到 LINE。"
+
+
 def _run_agent(task_id: str, text: str, callback_url: str) -> None:
     try:
         market_chart_requested = bool(MARKET_CHART_RE.search(text))
@@ -205,9 +256,12 @@ def _run_agent(task_id: str, text: str, callback_url: str) -> None:
             or result.get("text")
             or "任務已完成，但沒有文字輸出。"
         )[:30000]
+        artifact, visible = _extract_artifact(visible)
         payload: dict[str, Any] = {
             "taskId": task_id, "status": "completed", "text": visible[:5000]
         }
+        if artifact:
+            payload["artifact"] = artifact
         digest = _parse_news_digest(visible)
         snapshot = _parse_market_snapshot(visible)
         if snapshot:

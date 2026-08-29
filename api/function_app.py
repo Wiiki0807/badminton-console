@@ -1,6 +1,8 @@
 """HTTP API for the badminton console, replacing the endpoints previously served by server.py."""
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -99,6 +101,24 @@ def read_body(req: func.HttpRequest) -> dict:
     if not isinstance(body, dict):
         raise ValueError("body must be an object")
     return body
+
+
+def _openclaw_artifact(value: object) -> dict | None:
+    """Validate and decode a bounded artifact received from the private cam bridge."""
+    if not isinstance(value, dict):
+        return None
+    filename = str(value.get("name", ""))
+    content_type = str(value.get("contentType", "application/octet-stream"))[:100]
+    encoded = str(value.get("base64", ""))
+    if not filename or len(filename) > 120 or len(encoded) > 700_000:
+        return None
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error):
+        return None
+    if not raw or len(raw) > 512 * 1024 or value.get("size") != len(raw):
+        return None
+    return {"name": filename, "contentType": content_type, "size": len(raw), "raw": raw}
 
 
 @app.route(route="health", methods=["GET"])
@@ -560,7 +580,24 @@ def line_openclaw_callback(req: func.HttpRequest) -> func.HttpResponse:
             market_snapshot.validate(body.get("marketSnapshot"))
             if status == "completed" else None
         )
-        if snapshot:
+        artifact = _openclaw_artifact(body.get("artifact")) if status == "completed" else None
+        if artifact:
+            try:
+                download_url = store.upload_line_artifact(
+                    artifact["raw"], artifact["name"], artifact["contentType"]
+                )
+                line_bot.push_artifact(
+                    str(row.get("targetId", "")), task_id, artifact["name"], download_url,
+                    artifact["size"], result_text, access_token,
+                )
+            except Exception:
+                logging.exception("LINE OpenClaw artifact delivery failed")
+                line_bot.push_text(
+                    str(row.get("targetId", "")),
+                    f"{prefix} {task_id[:8]}\n\n{result_text}\n\n檔案上傳失敗，請重新執行任務。",
+                    access_token, retry_key=task_id,
+                )
+        elif snapshot:
             store.save_line_openclaw_market_snapshot(task_id, snapshot)
             try:
                 chart_url = ""
