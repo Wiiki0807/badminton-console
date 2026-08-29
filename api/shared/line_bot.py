@@ -50,9 +50,9 @@ RED_STAMP_PATTERN = re.compile(
     re.IGNORECASE,
 )
 IMAGE_EDIT_INTENT_PATTERN = re.compile(
-    r"(?:轉成|改成|變成|畫成|做成|生成|產生|製作|風格化|重繪|修圖).{0,30}"
+    r"(?:轉成|轉換成|改成|變成|畫成|做成|生成|產生|製作|風格化|重繪|修圖).{0,30}"
     r"(?:漫畫|卡通|動畫|插畫|水彩|油畫|素描|風格|圖片|照片|圖)|"
-    r"(?:漫畫|卡通|動畫|插畫|水彩|油畫|素描).{0,30}(?:轉成|改成|變成|畫成|做成|生成|產生|製作|風格化|重繪)",
+    r"(?:漫畫|卡通|動畫|插畫|水彩|油畫|素描).{0,30}(?:轉成|轉換成|改成|變成|畫成|做成|生成|產生|製作|風格化|重繪)",
     re.IGNORECASE,
 )
 IMAGE_EDIT_SOURCE_PATTERN = re.compile(
@@ -485,6 +485,16 @@ def history_has_recent_image(history: list[dict[str, str]]) -> bool:
         str(item.get("role", "")) == "user"
         and str(item.get("content", "")).startswith("[使用者傳送一張圖片")
         for item in history[-12:]
+    )
+
+
+def should_edit_recent_image(text: str, history: list[dict[str, str]]) -> bool:
+    """Use the sender's cached image unless they explicitly refer to a future upload."""
+    bounded = str(text or "").strip()
+    return bool(
+        bounded
+        and history_has_recent_image(history)
+        and not NEXT_IMAGE_PATTERN.search(bounded)
     )
 
 

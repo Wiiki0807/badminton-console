@@ -329,6 +329,49 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                     )
                 continue
             if image_intent == "image_edit":
+                if line_bot.should_edit_recent_image(incoming_text, history):
+                    try:
+                        recent_image_data_url = store.load_line_recent_image(image_context_id)
+                    except Exception:
+                        logging.exception("LINE recent image read failed for image edit")
+                        recent_image_data_url = ""
+                    if recent_image_data_url:
+                        try:
+                            try:
+                                _push_image_processing_notice(
+                                    source, str(event.get("webhookEventId", "")), access_token
+                                )
+                            except Exception:
+                                logging.exception("LINE image processing notice failed; continuing")
+                            generated, generated_type = inference_hub.edit_image(
+                                recent_image_data_url, incoming_text
+                            )
+                            original_url, preview_url = store.upload_line_generated_image(
+                                generated, generated_type
+                            )
+                            text = "🎨 小羽已依照最近一張照片完成修改。"
+                            line_bot.reply_image(
+                                reply_token, text, original_url, preview_url, access_token
+                            )
+                            try:
+                                store.add_line_memory(
+                                    conversation_id,
+                                    "user",
+                                    f"[使用者要求修改最近圖片] {incoming_text}",
+                                )
+                                store.add_line_memory(conversation_id, "assistant", text)
+                            except Exception:
+                                logging.exception(
+                                    "LINE memory write failed; recent image edit was delivered"
+                                )
+                        except Exception:
+                            logging.exception("LINE recent image edit failed")
+                            line_bot.reply(
+                                reply_token,
+                                "影像修改服務目前暫時失敗，請稍後再試一次。",
+                                access_token,
+                            )
+                        continue
                 text = "請傳送要修改的圖片；收到後小羽會依照這項要求處理。"
                 _reply_with_daily_briefing(
                     reply_token, text, access_token, briefing_future
