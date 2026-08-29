@@ -814,6 +814,73 @@ def reply_texts(reply_token: str, texts: list[str], access_token: str) -> None:
         raise RuntimeError(f"LINE reply failed ({exc.code}): {body}") from exc
 
 
+def reply_messages(reply_token: str, messages: list[dict[str, Any]], access_token: str) -> None:
+    if not reply_token or not messages or len(messages) > 5:
+        raise ValueError("invalid LINE reply messages")
+    _send_messages(LINE_REPLY_URL, {"replyToken": reply_token, "messages": messages}, access_token)
+
+
+def _send_messages(
+    url: str, value: dict[str, Any], access_token: str, *, retry_key: str = ""
+) -> None:
+    payload = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+    if retry_key:
+        headers["X-Line-Retry-Key"] = retry_key[:36]
+    req = request.Request(url, data=payload, method="POST", headers=headers)
+    try:
+        with request.urlopen(req, timeout=8) as response:
+            response.read()
+    except error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"LINE message failed ({exc.code}): {body}") from exc
+
+
+def news_digest_flex(task_id: str, digest: dict[str, Any]) -> dict[str, Any]:
+    """Build a bounded Flex Carousel; callers must validate the digest first."""
+    bubbles = []
+    for index, item in enumerate(digest["items"]):
+        meta = " · ".join(filter(None, [item.get("date", ""), item.get("confidence", "")]))
+        body = [
+            {"type": "text", "text": item["title"], "weight": "bold", "size": "lg", "wrap": True},
+            {"type": "text", "text": item["shortSummary"], "size": "sm", "color": "#555555", "wrap": True, "margin": "md"},
+        ]
+        if meta:
+            body.insert(0, {"type": "text", "text": meta, "size": "xs", "color": "#777777", "wrap": True})
+        bubbles.append({
+            "type": "bubble",
+            "size": "kilo",
+            "body": {"type": "box", "layout": "vertical", "contents": body},
+            "footer": {
+                "type": "box", "layout": "vertical", "spacing": "sm", "contents": [
+                    {"type": "button", "style": "primary", "height": "sm", "color": "#2E7D32",
+                     "action": {"type": "postback", "label": "詳細摘要", "displayText": f"查看第 {index + 1} 則詳細摘要",
+                                "data": f"action=news_detail&task={task_id}&item={index}"}},
+                    {"type": "button", "style": "link", "height": "sm",
+                     "action": {"type": "uri", "label": "開啟原文", "uri": item["sources"][0]}},
+                ],
+            },
+        })
+    return {
+        "type": "flex",
+        "altText": f"{digest['title']}（共 {len(bubbles)} 則）"[:400],
+        "contents": {"type": "carousel", "contents": bubbles},
+    }
+
+
+def push_news_digest(
+    target_id: str, task_id: str, digest: dict[str, Any], access_token: str
+) -> None:
+    if not target_id:
+        raise ValueError("missing LINE push target")
+    _send_messages(
+        LINE_PUSH_URL,
+        {"to": target_id, "messages": [news_digest_flex(task_id, digest)]},
+        access_token,
+        retry_key=task_id,
+    )
+
+
 def push_text(
     target_id: str, text: str, access_token: str, *, retry_key: str = ""
 ) -> None:

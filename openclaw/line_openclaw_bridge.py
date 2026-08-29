@@ -31,6 +31,21 @@ OPENCLAW_ENTRY = (
 MAX_BODY = 64 * 1024
 MAX_TASK_CHARS = 8_000
 CALLBACK_RE = re.compile(r"https://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]{1,1800}\Z")
+NEWS_REQUEST_RE = re.compile(
+    r"(?:新聞|最新消息|近期消息|產業動態|news|headlines?|company updates?)",
+    re.IGNORECASE,
+)
+NEWS_JSON_INSTRUCTION = """
+
+LINE 顯示契約：完成 verified-news-digest 搜尋與交叉查證後，只輸出一個 JSON 物件，
+不要 Markdown、不要 code fence、不要前後說明。格式：
+{"type":"verified_news_digest","title":"摘要標題","cutoff":"Asia/Taipei 截止時間",
+"overallTrend":"整體趨勢","watchNext":"後續觀察",
+"items":[{"title":"標題","date":"日期","shortSummary":"80 字內卡片摘要",
+"summary":"詳細摘要","importance":"為何重要","confidence":"官方確認/多方報導/單一來源/傳聞／未獲證實",
+"sources":["https://直接支持內容的來源"]}]}
+最多五則；每則至少一個 HTTPS 原始來源。來源 URL 必須來自實際搜尋／讀取結果，不可編造。
+""".strip()
 
 
 def _env(name: str) -> str:
@@ -105,6 +120,26 @@ def _callback(url: str, payload: dict[str, Any]) -> None:
         response.read()
 
 
+def _news_task_message(text: str) -> str:
+    return f"{text}\n\n{NEWS_JSON_INSTRUCTION}" if NEWS_REQUEST_RE.search(text) else text
+
+
+def _parse_news_digest(text: str) -> dict[str, Any] | None:
+    candidate = text.strip()
+    fence = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", candidate, re.DOTALL | re.IGNORECASE)
+    if fence:
+        candidate = fence.group(1)
+    try:
+        value = json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(value, dict) or value.get("type") != "verified_news_digest":
+        return None
+    if not isinstance(value.get("items"), list) or not value["items"]:
+        return None
+    return value
+
+
 def _run_agent(task_id: str, text: str, callback_url: str) -> None:
     try:
         if re.search(r"Robot Voice Hub.{0,20}(?:狀態|在線|線上)", text, re.IGNORECASE):
@@ -114,6 +149,7 @@ def _run_agent(task_id: str, text: str, callback_url: str) -> None:
                 "不可使用 find、grep、cat、shell 組合或其他命令。執行後依使用者要求回覆。\n\n"
                 f"使用者要求：{text}"
             )
+        text = _news_task_message(text)
         result = _openclaw(
             "agent", "--agent", "main", "--message", text,
             "--session-key", "agent:main:line-owner", "--timeout", "1800", "--json",
@@ -124,8 +160,14 @@ def _run_agent(task_id: str, text: str, callback_url: str) -> None:
             or (result.get("result") or {}).get("text")
             or result.get("text")
             or "任務已完成，但沒有文字輸出。"
-        )[:5000]
-        _callback(callback_url, {"taskId": task_id, "status": "completed", "text": visible})
+        )[:30000]
+        payload: dict[str, Any] = {
+            "taskId": task_id, "status": "completed", "text": visible[:5000]
+        }
+        digest = _parse_news_digest(visible)
+        if digest:
+            payload["newsDigest"] = digest
+        _callback(callback_url, payload)
     except Exception as exc:
         logging.exception("OpenClaw task failed id=%s", task_id)
         try:
