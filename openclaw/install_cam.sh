@@ -59,6 +59,10 @@ install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/robot_control.py" "${state_dir}/robot_control.py"
 install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/azure_callback.py" "${state_dir}/azure_callback.py"
+if [[ -f "${source_dir}/openclaw-AGENTS.md" ]]; then
+  install -o "${user_name}" -g "${user_name}" -m 600 \
+    "${source_dir}/openclaw-AGENTS.md" "${state_dir}/workspace/AGENTS.md"
+fi
 install -o "${user_name}" -g "${user_name}" -m 644 \
   "${source_dir}/line-openclaw-bridge.service" \
   "${user_home}/.config/systemd/user/line-openclaw-bridge.service"

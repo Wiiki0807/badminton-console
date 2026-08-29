@@ -40,6 +40,19 @@ def _env(name: str) -> str:
     return value
 
 
+def _runtime_env(name: str) -> str:
+    """Read rotatable callback secrets from disk instead of stale service env."""
+    try:
+        for line in (STATE_DIR / ".env").read_text(encoding="utf-8").splitlines():
+            if line.startswith(f"{name}="):
+                value = line.split("=", 1)[1].strip()
+                if value:
+                    return value
+    except OSError:
+        pass
+    return _env(name)
+
+
 def _openclaw(*args: str, timeout: int = 60) -> dict[str, Any]:
     completed = subprocess.run(
         [NODE, OPENCLAW_ENTRY, *args],
@@ -84,7 +97,7 @@ def _callback(url: str, payload: dict[str, Any]) -> None:
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         method="POST",
         headers={
-            "x-line-openclaw-token": _env("OPENCLAW_LINE_CALLBACK_TOKEN"),
+            "x-line-openclaw-token": _runtime_env("OPENCLAW_LINE_CALLBACK_TOKEN"),
             "Content-Type": "application/json",
         },
     )
@@ -94,6 +107,13 @@ def _callback(url: str, payload: dict[str, Any]) -> None:
 
 def _run_agent(task_id: str, text: str, callback_url: str) -> None:
     try:
+        if re.search(r"Robot Voice Hub.{0,20}(?:狀態|在線|線上)", text, re.IGNORECASE):
+            text = (
+                "安全約束：只可呼叫 exec，且 command 必須完全是 "
+                "'/home/tommywu/.openclaw/robot_control.py status'；"
+                "不可使用 find、grep、cat、shell 組合或其他命令。執行後依使用者要求回覆。\n\n"
+                f"使用者要求：{text}"
+            )
         result = _openclaw(
             "agent", "--agent", "main", "--message", text,
             "--session-key", "agent:main:line-owner", "--timeout", "1800", "--json",
