@@ -35,6 +35,10 @@ NEWS_REQUEST_RE = re.compile(
     r"(?:新聞|最新消息|近期消息|產業動態|news|headlines?|company updates?)",
     re.IGNORECASE,
 )
+MARKET_REQUEST_RE = re.compile(
+    r"(?:股價|股票報價|最新報價|收盤價|市場報價|stock prices?|market quotes?|quotes?.{0,12}(?:stock|ticker))",
+    re.IGNORECASE,
+)
 NEWS_JSON_INSTRUCTION = """
 
 LINE 顯示契約：完成 verified-news-digest 搜尋與交叉查證後，只輸出一個 JSON 物件，
@@ -45,6 +49,18 @@ LINE 顯示契約：完成 verified-news-digest 搜尋與交叉查證後，只�
 "summary":"詳細摘要","importance":"為何重要","confidence":"官方確認/多方報導/單一來源/傳聞／未獲證實",
 "sources":["https://直接支持內容的來源"]}]}
 最多五則；每則至少一個 HTTPS 原始來源。來源 URL 必須來自實際搜尋／讀取結果，不可編造。
+""".strip()
+MARKET_JSON_INSTRUCTION = """
+
+LINE 顯示契約：查找使用者指定股票在最近一個已完成交易時段的可靠報價，並只輸出一個 JSON 物件；
+不要 Markdown、不要 code fence、不要前後說明。格式：
+{"type":"market_snapshot","title":"美股收盤","market":"US","asOf":"含時區的資料日期時間",
+"session":"美東收盤","quotes":[{"name":"公司名稱","symbol":"NVDA","price":123.45,
+"change":1.23,"changePercent":1.01,"currency":"USD","open":122.0,"high":125.0,
+"low":121.0,"volume":12345678,"sourceUrl":"https://直接支持該報價的來源"}]}
+price、change、changePercent 必須是 JSON 數字；open/high/low/volume 查不到時可為 null。
+最多八檔並維持使用者順序。不可把搜尋摘要或模型記憶當即時報價；必須核對交易日期、時段、幣別，
+且每檔提供實際讀取、直接支持數字的 HTTPS 來源。若市場尚未開盤，使用最近完成的交易時段並清楚標示 asOf/session。
 """.strip()
 
 
@@ -121,6 +137,8 @@ def _callback(url: str, payload: dict[str, Any]) -> None:
 
 
 def _news_task_message(text: str) -> str:
+    if MARKET_REQUEST_RE.search(text):
+        return f"{text}\n\n{MARKET_JSON_INSTRUCTION}"
     return f"{text}\n\n{NEWS_JSON_INSTRUCTION}" if NEWS_REQUEST_RE.search(text) else text
 
 
@@ -136,6 +154,22 @@ def _parse_news_digest(text: str) -> dict[str, Any] | None:
     if not isinstance(value, dict) or value.get("type") != "verified_news_digest":
         return None
     if not isinstance(value.get("items"), list) or not value["items"]:
+        return None
+    return value
+
+
+def _parse_market_snapshot(text: str) -> dict[str, Any] | None:
+    candidate = text.strip()
+    fence = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", candidate, re.DOTALL | re.IGNORECASE)
+    if fence:
+        candidate = fence.group(1)
+    try:
+        value = json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(value, dict) or value.get("type") != "market_snapshot":
+        return None
+    if not isinstance(value.get("quotes"), list) or not value["quotes"]:
         return None
     return value
 
@@ -165,7 +199,10 @@ def _run_agent(task_id: str, text: str, callback_url: str) -> None:
             "taskId": task_id, "status": "completed", "text": visible[:5000]
         }
         digest = _parse_news_digest(visible)
-        if digest:
+        snapshot = _parse_market_snapshot(visible)
+        if snapshot:
+            payload["marketSnapshot"] = snapshot
+        elif digest:
             payload["newsDigest"] = digest
         _callback(callback_url, payload)
     except Exception as exc:

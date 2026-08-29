@@ -881,6 +881,70 @@ def push_news_digest(
     )
 
 
+def market_snapshot_flex(task_id: str, snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Build one compact, table-like Flex Bubble for a market snapshot."""
+    contents: list[dict[str, Any]] = [
+        {"type": "text", "text": snapshot["title"], "weight": "bold", "size": "lg", "wrap": True},
+    ]
+    meta = " · ".join(filter(None, [snapshot.get("asOf", ""), snapshot.get("session", "")]))
+    if meta:
+        contents.append({
+            "type": "text", "text": meta, "size": "xs", "color": "#777777",
+            "wrap": True, "margin": "xs",
+        })
+    contents.append({"type": "separator", "margin": "md"})
+    for quote in snapshot["quotes"]:
+        percent = quote["changePercent"]
+        arrow = "▲" if percent > 0 else "▼" if percent < 0 else "—"
+        color = "#D32F2F" if percent > 0 else "#2E7D32" if percent < 0 else "#666666"
+        currency_prefix = "$" if quote["currency"] == "USD" else f"{quote['currency']} "
+        contents.append({
+            "type": "box", "layout": "horizontal", "margin": "md", "contents": [
+                {"type": "text", "text": quote["symbol"], "size": "sm", "weight": "bold", "flex": 3},
+                {"type": "text", "text": f"{currency_prefix}{quote['price']:,.2f}",
+                 "size": "sm", "align": "end", "flex": 4},
+                {"type": "text", "text": f"{arrow} {abs(percent):.2f}%", "size": "sm",
+                 "align": "end", "color": color, "weight": "bold", "flex": 4},
+            ],
+        })
+    contents.extend([
+        {"type": "separator", "margin": "lg"},
+        {"type": "text", "text": "價格可能延遲，請以來源市場為準", "size": "xxs",
+         "color": "#999999", "wrap": True, "margin": "md"},
+    ])
+    return {
+        "type": "flex",
+        "altText": f"{snapshot['title']}：{len(snapshot['quotes'])} 檔報價"[:400],
+        "contents": {
+            "type": "bubble", "size": "mega",
+            "body": {"type": "box", "layout": "vertical", "contents": contents},
+            "footer": {
+                "type": "box", "layout": "horizontal", "spacing": "sm", "contents": [
+                    {"type": "button", "style": "primary", "height": "sm", "color": "#2E7D32",
+                     "action": {"type": "postback", "label": "更新報價", "displayText": "更新這組股票報價",
+                                "data": f"action=market_refresh&task={task_id}"}},
+                    {"type": "button", "style": "secondary", "height": "sm",
+                     "action": {"type": "postback", "label": "查看詳情", "displayText": "查看股價詳細資料",
+                                "data": f"action=market_details&task={task_id}"}},
+                ],
+            },
+        },
+    }
+
+
+def push_market_snapshot(
+    target_id: str, task_id: str, snapshot: dict[str, Any], access_token: str
+) -> None:
+    if not target_id:
+        raise ValueError("missing LINE push target")
+    _send_messages(
+        LINE_PUSH_URL,
+        {"to": target_id, "messages": [market_snapshot_flex(task_id, snapshot)]},
+        access_token,
+        retry_key=task_id,
+    )
+
+
 def push_text(
     target_id: str, text: str, access_token: str, *, retry_key: str = ""
 ) -> None:
