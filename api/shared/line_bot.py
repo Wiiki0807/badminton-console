@@ -55,6 +55,12 @@ IMAGE_EDIT_INTENT_PATTERN = re.compile(
     r"(?:漫畫|卡通|動畫|插畫|水彩|油畫|素描).{0,30}(?:轉成|改成|變成|畫成|做成|生成|產生|製作|風格化|重繪)",
     re.IGNORECASE,
 )
+IMAGE_EDIT_SOURCE_PATTERN = re.compile(
+    r"(?:根據|依照|使用|用).{0,16}(?:傳入|上傳|提供|接下來|下一張|這張|那張|照片|圖片|原圖)|"
+    r"(?:傳入|上傳|提供|接下來|下一張|這張|那張|剛傳|上一張|原圖|原始照片).{0,24}"
+    r"(?:照片|圖片|圖|轉成|改成|風格)",
+    re.IGNORECASE,
+)
 IMAGE_GENERATION_INTENT_PATTERN = re.compile(
     r"(?:產生|產出|生成|創作|繪製|畫出?|做出?|製作).{0,120}"
     r"(?:圖片|圖像|插圖|畫面|照片|圖)|"
@@ -456,12 +462,19 @@ def image_request_intent(
     bounded = str(text or "").strip()
     if not bounded:
         return "chat"
+    is_edit = bool(
+        IMAGE_EDIT_INTENT_PATTERN.search(bounded)
+        and not OCR_INTENT_PATTERN.search(bounded)
+    )
+    # A request that explicitly depends on supplied pixels is an edit even if it
+    # also says "產生". Check this before the text-to-image fast path.
+    if is_edit and IMAGE_EDIT_SOURCE_PATTERN.search(bounded):
+        return "image_edit"
     if is_image_generation_request(bounded):
         return "image_generate"
     if (
-        IMAGE_EDIT_INTENT_PATTERN.search(bounded)
+        is_edit
         and (NEXT_IMAGE_PATTERN.search(bounded) or IMAGE_REQUEST_PATTERN.search(bounded))
-        and not OCR_INTENT_PATTERN.search(bounded)
     ):
         return "image_edit"
     return str(inference_hub.classify_image_intent(bounded, history or []).get("intent", "chat"))
