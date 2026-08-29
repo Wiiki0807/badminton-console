@@ -82,9 +82,21 @@ install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/robot_control.py" "${state_dir}/robot_control.py"
 install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/azure_callback.py" "${state_dir}/azure_callback.py"
-if [[ -f "${source_dir}/openclaw-AGENTS.md" ]]; then
+workspace_agents="${source_dir}/workspace/AGENTS.md"
+if [[ ! -f "${workspace_agents}" ]]; then
+  workspace_agents="${source_dir}/openclaw-AGENTS.md"
+fi
+if [[ -f "${workspace_agents}" ]]; then
   install -o "${user_name}" -g "${user_name}" -m 600 \
-    "${source_dir}/openclaw-AGENTS.md" "${state_dir}/workspace/AGENTS.md"
+    "${workspace_agents}" "${state_dir}/workspace/AGENTS.md"
+fi
+news_skill_source="${source_dir}/workspace/skills/verified-news-digest/SKILL.md"
+if [[ -f "${news_skill_source}" ]]; then
+  install -o "${user_name}" -g "${user_name}" -m 700 -d \
+    "${state_dir}/workspace/skills/verified-news-digest"
+  install -o "${user_name}" -g "${user_name}" -m 600 \
+    "${news_skill_source}" \
+    "${state_dir}/workspace/skills/verified-news-digest/SKILL.md"
 fi
 install -o "${user_name}" -g "${user_name}" -m 644 \
   "${source_dir}/line-openclaw-bridge.service" \
