@@ -563,8 +563,13 @@ def line_openclaw_callback(req: func.HttpRequest) -> func.HttpResponse:
         if snapshot:
             store.save_line_openclaw_market_snapshot(task_id, snapshot)
             try:
+                chart_url = ""
+                chart_png = market_snapshot.render_price_chart(snapshot)
+                if chart_png:
+                    chart_url, _ = store.upload_line_generated_image(chart_png, "image/png")
                 line_bot.push_market_snapshot(
-                    str(row.get("targetId", "")), task_id, snapshot, access_token
+                    str(row.get("targetId", "")), task_id, snapshot, access_token,
+                    chart_url=chart_url,
                 )
             except Exception:
                 logging.exception("LINE Flex market snapshot failed; falling back to text")

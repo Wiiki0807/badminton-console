@@ -21,6 +21,22 @@ SNAPSHOT = {
         "sourceUrl": "https://example.com/quote/nvda",
     }],
 }
+HISTORY_SNAPSHOT = {
+    "type": "market_snapshot", "title": "NVDA 最近五個交易日", "market": "US",
+    "asOf": "2026-08-28 16:00 ET", "session": "美東收盤", "chartRequested": True,
+    "quotes": [
+        {
+            "date": f"2026-08-{day:02d}", "name": "NVIDIA", "symbol": "NVDA",
+            "price": price, "change": change, "changePercent": percent, "currency": "USD",
+            "sourceUrl": "https://example.com/quote/nvda",
+        }
+        for day, price, change, percent in [
+            (24, 208.48, -6.25, -2.91), (25, 213.05, 4.57, 2.19),
+            (26, 209.66, -3.39, -1.59), (27, 227.98, 18.32, 8.74),
+            (28, 217.55, -10.43, -4.57),
+        ]
+    ],
+}
 
 
 def postback_request(action: str) -> function_app.func.HttpRequest:
@@ -56,6 +72,25 @@ class MarketSnapshotTests(unittest.TestCase):
         unsafe["quotes"][0]["price"] = "NaN"
         self.assertIsNone(market_snapshot.validate(unsafe))
 
+    def test_renders_historical_chart_and_embeds_it_in_flex(self):
+        snapshot = market_snapshot.validate(HISTORY_SNAPSHOT)
+
+        chart = market_snapshot.render_price_chart(snapshot)
+        message = line_bot.market_snapshot_flex(
+            TASK_ID, snapshot, "https://blob.test/chart.png?sas"
+        )
+
+        self.assertTrue(chart.startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertEqual(
+            "https://blob.test/chart.png?sas", message["contents"]["hero"]["url"]
+        )
+        first_row = message["contents"]["body"]["contents"][3]
+        self.assertEqual("08-24", first_row["contents"][0]["text"])
+
+    def test_chart_is_not_rendered_without_request_or_two_dates(self):
+        snapshot = market_snapshot.validate(SNAPSHOT)
+        self.assertIsNone(market_snapshot.render_price_chart(snapshot))
+
     @mock.patch("function_app.store.finish_line_openclaw_task")
     @mock.patch("function_app.line_bot.push_market_snapshot")
     @mock.patch("function_app.store.save_line_openclaw_market_snapshot")
@@ -74,7 +109,40 @@ class MarketSnapshotTests(unittest.TestCase):
         response = function_app.line_openclaw_callback(req)
         self.assertEqual(200, response.status_code)
         saved = save_snapshot.call_args.args[1]
-        push_snapshot.assert_called_once_with("U-owner", TASK_ID, saved, "line-token")
+        push_snapshot.assert_called_once_with(
+            "U-owner", TASK_ID, saved, "line-token", chart_url=""
+        )
+        finish.assert_called_once_with(TASK_ID, "completed")
+
+    @mock.patch("function_app.store.finish_line_openclaw_task")
+    @mock.patch("function_app.line_bot.push_market_snapshot")
+    @mock.patch(
+        "function_app.store.upload_line_generated_image",
+        return_value=("https://blob.test/chart.png?sas", "https://blob.test/preview.jpg?sas"),
+    )
+    @mock.patch("function_app.store.save_line_openclaw_market_snapshot")
+    @mock.patch("function_app.store.get_line_openclaw_task", return_value={"targetId": "U-owner"})
+    @mock.patch("function_app.inference_hub.openclaw_callback_token_matches", return_value=True)
+    @mock.patch.dict("os.environ", {"LINE_CHANNEL_ACCESS_TOKEN": "line-token"}, clear=True)
+    def test_callback_uploads_and_embeds_requested_market_chart(
+        self, _auth, _get_task, _save, upload, push_snapshot, finish
+    ):
+        req = function_app.func.HttpRequest(
+            method="POST", url="https://example.test/api/line-openclaw-callback",
+            headers={"x-line-openclaw-token": "secret"},
+            body=json.dumps({
+                "taskId": TASK_ID, "status": "completed", "text": "fallback",
+                "marketSnapshot": HISTORY_SNAPSHOT,
+            }).encode(),
+        )
+
+        response = function_app.line_openclaw_callback(req)
+
+        self.assertEqual(200, response.status_code)
+        raw, content_type = upload.call_args.args
+        self.assertTrue(raw.startswith(b"\x89PNG"))
+        self.assertEqual("image/png", content_type)
+        self.assertEqual("https://blob.test/chart.png?sas", push_snapshot.call_args.kwargs["chart_url"])
         finish.assert_called_once_with(TASK_ID, "completed")
 
     @mock.patch("function_app.store.get_line_openclaw_market_snapshot", return_value=SNAPSHOT)
