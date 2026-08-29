@@ -31,6 +31,26 @@ jobs:
             --build-arg VCS_REF="${GITHUB_SHA}" \
             --tag "badminton-api:${GITHUB_SHA}" \
             api
+      - name: Start container and verify Functions health
+        run: |
+          set -euo pipefail
+          container_id="$(docker run --detach --publish 8080:80 "badminton-api:${GITHUB_SHA}")"
+          cleanup() {
+            docker rm --force "${container_id}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          response=""
+          for _ in $(seq 1 40); do
+            if response="$(curl --fail --silent --show-error http://127.0.0.1:8080/api/health 2>/dev/null)"; then
+              break
+            fi
+            sleep 2
+          done
+          if [[ -z "${response}" ]]; then
+            docker logs "${container_id}"
+            exit 1
+          fi
+          python -c 'import json,sys; value=json.load(sys.stdin); assert value == {"ok": True, "service": "badminton-api"}' <<<"${response}"
 
   deploy:
     name: Push ACR and deploy Container App
