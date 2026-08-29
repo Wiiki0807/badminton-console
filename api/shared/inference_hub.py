@@ -619,6 +619,51 @@ def edit_image(image_data_url: str, user_request: str) -> tuple[bytes, str]:
     raise RuntimeError("unsupported generated image format")
 
 
+def generate_image(user_request: str) -> tuple[bytes, str]:
+    """Generate one image from text through the secured GPT Image gateway."""
+    base_url = _setting("INFERENCE_HUB_URL").rstrip("/")
+    token = _setting("INFERENCE_HUB_TOKEN")
+    if not base_url or not token:
+        raise RuntimeError("Inference Hub is not configured")
+    bounded_request = str(user_request or "").strip()[:1600]
+    if not bounded_request:
+        raise ValueError("missing image generation request")
+    payload = {
+        "model": IMAGE_EDIT_MODEL,
+        "prompt": (
+            "Create a high-quality image that follows the user's request. "
+            "Do not add unrelated text, captions, watermarks or logos. User request: "
+            + bounded_request
+        ),
+        "size": "1536x1024",
+        "quality": "low",
+        "n": 1,
+    }
+    req = request.Request(
+        f"{base_url}/images/generations",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with request.urlopen(req, timeout=150) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        encoded = str(((result.get("data") or [{}])[0]).get("b64_json") or "")
+        output = base64.b64decode(encoded, validate=True)
+    except (error.HTTPError, error.URLError, TimeoutError, OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        raise RuntimeError("image generation failed") from exc
+    if not output or len(output) > MAX_IMAGE_EDIT_OUTPUT_BYTES:
+        raise RuntimeError("invalid generated image size")
+    if output.startswith(b"\x89PNG\r\n\x1a\n"):
+        return output, "image/png"
+    if output.startswith(b"\xff\xd8\xff"):
+        return output, "image/jpeg"
+    raise RuntimeError("unsupported generated image format")
+
+
 def _json_request(
     url: str,
     *,

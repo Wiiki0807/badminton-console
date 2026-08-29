@@ -277,6 +277,29 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                 except Exception:
                     logging.exception("LINE memory write failed; reminder reply was delivered")
                 continue
+            if message_type == "text" and line_bot.is_image_generation_request(incoming_text):
+                try:
+                    generated, generated_type = inference_hub.generate_image(incoming_text)
+                    original_url, preview_url = store.upload_line_generated_image(
+                        generated, generated_type
+                    )
+                    text = "🎨 小羽已完成圖片。"
+                    line_bot.reply_image(
+                        reply_token, text, original_url, preview_url, access_token
+                    )
+                    try:
+                        store.add_line_memory(conversation_id, "user", incoming_text)
+                        store.add_line_memory(conversation_id, "assistant", text)
+                    except Exception:
+                        logging.exception("LINE memory write failed; generated image was still delivered")
+                except Exception:
+                    logging.exception("LINE text-to-image generation failed")
+                    line_bot.reply(
+                        reply_token,
+                        "影像產生服務目前暫時失敗，請稍後再試一次。",
+                        access_token,
+                    )
+                continue
             display_name = ""
             if line_bot.needs_profile(incoming_text):
                 display_name = line_bot.get_display_name(str(source.get("userId", "")), access_token)

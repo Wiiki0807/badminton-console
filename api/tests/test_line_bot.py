@@ -539,6 +539,14 @@ class LineBotAnswerTests(unittest.TestCase):
             {"role": "user", "content": "下一張圖片請 OCR"}
         ]))
 
+    def test_text_to_image_intent_is_explicit(self):
+        self.assertTrue(line_bot.is_image_generation_request(
+            "產生一個女人坐在長沙發上，背後是海洋的圖片"
+        ))
+        self.assertTrue(line_bot.is_image_generation_request("幫我畫一張海邊插圖"))
+        self.assertFalse(line_bot.is_image_generation_request("請描述這張圖片"))
+        self.assertFalse(line_bot.is_image_generation_request("下一張圖片請 OCR"))
+
     @mock.patch("shared.inference_hub.request.urlopen")
     @mock.patch.dict(
         "os.environ",
@@ -568,6 +576,32 @@ class LineBotAnswerTests(unittest.TestCase):
         self.assertIn(b'openai/openai/gpt-image-2', sent.data)
         self.assertIn(b'1024x1536', sent.data)
         self.assertIn("multipart/form-data", sent.headers["Content-type"])
+
+    @mock.patch("shared.inference_hub.request.urlopen")
+    @mock.patch.dict(
+        "os.environ",
+        {"INFERENCE_HUB_URL": "https://hub.test", "INFERENCE_HUB_TOKEN": "test-token"},
+        clear=True,
+    )
+    def test_text_to_image_uses_generation_endpoint(self, urlopen):
+        output = BytesIO()
+        Image.new("RGB", (40, 20), "blue").save(output, format="PNG")
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({
+            "data": [{"b64_json": base64.b64encode(output.getvalue()).decode()}]
+        }).encode()
+        urlopen.return_value = response
+
+        raw, content_type = inference_hub.generate_image("產生一張海邊風景圖片")
+
+        self.assertEqual("image/png", content_type)
+        self.assertTrue(raw.startswith(b"\x89PNG"))
+        sent = urlopen.call_args.args[0]
+        self.assertEqual("https://hub.test/images/generations", sent.full_url)
+        payload = json.loads(sent.data.decode("utf-8"))
+        self.assertEqual("openai/openai/gpt-image-2", payload["model"])
+        self.assertEqual("1536x1024", payload["size"])
+        self.assertIn("海邊風景", payload["prompt"])
 
     @mock.patch("shared.line_bot.request.urlopen")
     def test_reply_image_sends_text_and_line_image_message(self, urlopen):
