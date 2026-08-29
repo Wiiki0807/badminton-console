@@ -329,11 +329,7 @@ def line_reminders_dispatch(req: func.HttpRequest) -> func.HttpResponse:
     """Lease due reminders and deliver idempotent LINE Push messages."""
     candidate = req.headers.get("x-line-reminder-token", "").strip()
     callback_candidate = req.headers.get("Authorization", "").removeprefix("Bearer ").strip()
-    callback_expected = inference_hub._setting("LINE_OPENCLAW_CALLBACK_TOKEN")
-    callback_ok = bool(
-        callback_expected and callback_candidate
-        and hmac.compare_digest(callback_candidate, callback_expected)
-    )
+    callback_ok = inference_hub.openclaw_callback_token_matches(callback_candidate)
     if not inference_hub.reminder_dispatch_token_matches(candidate) and not callback_ok:
         return json_response({"error": "unauthorized"}, 401)
     access_token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
@@ -369,8 +365,7 @@ def line_reminders_dispatch(req: func.HttpRequest) -> func.HttpResponse:
 def line_openclaw_callback(req: func.HttpRequest) -> func.HttpResponse:
     """Receive one authenticated long-task completion and Push it to its owner."""
     supplied = req.headers.get("Authorization", "").removeprefix("Bearer ").strip()
-    expected = inference_hub._setting("LINE_OPENCLAW_CALLBACK_TOKEN")
-    if not expected or not supplied or not hmac.compare_digest(supplied, expected):
+    if not inference_hub.openclaw_callback_token_matches(supplied):
         return json_response({"error": "unauthorized"}, 401)
     access_token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
     if not access_token:
