@@ -40,6 +40,7 @@ def inject_settings(env: Mapping[str, str] = os.environ, target: Path = TARGET) 
         "LINE_OPENCLAW_CALLBACK_URL",
         "LINE_OPENCLAW_REMINDER_CALLBACK_URL",
         "LINE_OPENCLAW_CALLBACK_TOKEN",
+        "LINE_OWNER_USER_ID",
     ):
         value = env.get(name, "").strip()
         if value:

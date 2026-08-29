@@ -386,6 +386,26 @@ def claim_line_daily_briefing(user_id: str, date_key: str) -> bool:
         return False
 
 
+def claim_line_welcome(user_id: str) -> bool:
+    """Claim the one-time first-message welcome for a non-owner LINE user."""
+    bounded_user = str(user_id or "").strip()
+    if not bounded_user:
+        return False
+    entity = {
+        "PartitionKey": hashlib.sha256(
+            f"line-user-welcome:{bounded_user}".encode("utf-8")
+        ).hexdigest(),
+        "RowKey": "welcome-v1",
+        "createdAt": _epoch(now_ms()),
+    }
+    try:
+        with _table(LINE_DAILY_BRIEFING_TABLE) as table:
+            table.create_entity(entity)
+        return True
+    except ResourceExistsError:
+        return False
+
+
 def release_line_daily_briefing(user_id: str, date_key: str) -> None:
     """Allow a later message to retry when briefing generation failed completely."""
     partition = hashlib.sha256(
