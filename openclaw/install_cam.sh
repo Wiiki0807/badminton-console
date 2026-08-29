@@ -37,8 +37,11 @@ pair_code="$(get_env OPENCLAW_LINE_PAIR_CODE)"
 callback_token=""
 [[ -n "${bridge_token}" ]] || bridge_token="$(openssl rand -base64 48 | tr -d '\n')"
 [[ -n "${pair_code}" ]] || pair_code="$(openssl rand -hex 6)"
+reminder_token_file="/mnt/c/ProgramData/RocketAI/reminder-dispatch-token.txt"
 hub_token="$(get_env NV_INFER_HUB_TOKEN)"
-if [[ -n "${hub_token}" ]]; then
+if [[ -s "${reminder_token_file}" ]]; then
+  callback_token="$(tr -d '\r\n' < "${reminder_token_file}")"
+elif [[ -n "${hub_token}" ]]; then
   callback_token="$(printf '%s' 'rocketai-line-reminder-dispatch-v1' | \
     openssl dgst -sha256 -hmac "${hub_token}" \
     -binary | xxd -p -c 256)"
@@ -54,6 +57,8 @@ install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/line_openclaw_bridge.py" "${state_dir}/line_openclaw_bridge.py"
 install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/robot_control.py" "${state_dir}/robot_control.py"
+install -o "${user_name}" -g "${user_name}" -m 700 \
+  "${source_dir}/azure_callback.py" "${state_dir}/azure_callback.py"
 install -o "${user_name}" -g "${user_name}" -m 644 \
   "${source_dir}/line-openclaw-bridge.service" \
   "${user_home}/.config/systemd/user/line-openclaw-bridge.service"
