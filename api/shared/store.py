@@ -132,6 +132,30 @@ def get_line_openclaw_news_item(
         return None
 
 
+def save_line_openclaw_market_snapshot(task_id: str, snapshot: dict[str, Any]) -> None:
+    payload = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
+    if len(payload.encode("utf-8")) > 48 * 1024:
+        raise ValueError("market snapshot is too large")
+    with _table(LINE_OPENCLAW_TASK_TABLE) as table:
+        table.update_entity({
+            "PartitionKey": "task", "RowKey": task_id,
+            "marketSnapshotJson": payload, "updatedAt": _epoch(now_ms()),
+        }, mode=UpdateMode.MERGE)
+
+
+def get_line_openclaw_market_snapshot(
+    task_id: str, target_id: str
+) -> dict[str, Any] | None:
+    row = get_line_openclaw_task(task_id)
+    if not row or not hmac.compare_digest(str(row.get("targetId", "")), target_id):
+        return None
+    try:
+        snapshot = json.loads(str(row.get("marketSnapshotJson", "")))
+        return dict(snapshot) if isinstance(snapshot, dict) else None
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+
+
 def _epoch(value: int) -> EntityProperty:
     """Table Storage defaults ints to Edm.Int32, which millisecond timestamps overflow."""
     return EntityProperty(value, EdmType.INT64)

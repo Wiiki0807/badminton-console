@@ -20,6 +20,7 @@ from shared import reminders
 from shared import daily_briefing
 from shared import line_openclaw
 from shared import news_digest
+from shared import market_snapshot
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
@@ -143,17 +144,43 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                     continue
                 source = event.get("source") or {}
                 values = parse_qs(str((event.get("postback") or {}).get("data", "")))
-                if values.get("action") != ["news_detail"]:
-                    continue
+                action = values.get("action", [""])[0]
                 task_id = str(uuid.UUID(values.get("task", [""])[0]))
-                item_index = int(values.get("item", ["-1"])[0])
-                item = store.get_line_openclaw_news_item(
-                    task_id, str(source.get("userId", "")), item_index
-                )
-                if item:
-                    line_bot.reply(reply_token, news_digest.detail_text(item), access_token)
-                else:
-                    line_bot.reply(reply_token, "這則摘要不存在、已過期，或不屬於你的帳號。", access_token)
+                user_id = str(source.get("userId", ""))
+                if action == "news_detail":
+                    item_index = int(values.get("item", ["-1"])[0])
+                    item = store.get_line_openclaw_news_item(task_id, user_id, item_index)
+                    text = (
+                        news_digest.detail_text(item) if item else
+                        "這則摘要不存在、已過期，或不屬於你的帳號。"
+                    )
+                    line_bot.reply(reply_token, text, access_token)
+                elif action == "market_details":
+                    raw_snapshot = store.get_line_openclaw_market_snapshot(task_id, user_id)
+                    snapshot = market_snapshot.validate(raw_snapshot)
+                    text = (
+                        market_snapshot.detail_text(snapshot) if snapshot else
+                        "這組報價不存在、已過期，或不屬於你的帳號。"
+                    )
+                    line_bot.reply(reply_token, text, access_token)
+                elif action == "market_refresh":
+                    raw_snapshot = store.get_line_openclaw_market_snapshot(task_id, user_id)
+                    row = store.get_line_openclaw_task(task_id) if raw_snapshot else None
+                    prompt = str((row or {}).get("prompt", "")).strip()
+                    if not prompt:
+                        line_bot.reply(reply_token, "這組報價已無法更新，請重新輸入查詢。", access_token)
+                    else:
+                        try:
+                            new_task_id = str(uuid.uuid4())
+                            store.create_line_openclaw_task(new_task_id, user_id, prompt)
+                            line_openclaw.submit_task(user_id, prompt, task_id=new_task_id)
+                            text = f"📈 已開始更新報價 {new_task_id[:8]}，完成後小羽會通知你。"
+                        except PermissionError:
+                            text = "這個更新操作只允許已配對的主人使用。"
+                        except Exception:
+                            logging.exception("LINE market refresh failed")
+                            text = "報價更新服務暫時無法接受任務，請稍後再試。"
+                        line_bot.reply(reply_token, text, access_token)
             except (ValueError, TypeError):
                 logging.warning("Rejected malformed LINE news-detail postback")
             except Exception:
@@ -404,7 +431,23 @@ def line_openclaw_callback(req: func.HttpRequest) -> func.HttpResponse:
         result_text = str(body.get("text", "任務沒有輸出"))[:4500]
         prefix = "✅ OpenClaw 任務完成" if status == "completed" else "⚠️ OpenClaw 任務失敗"
         digest = news_digest.validate(body.get("newsDigest")) if status == "completed" else None
-        if digest:
+        snapshot = (
+            market_snapshot.validate(body.get("marketSnapshot"))
+            if status == "completed" else None
+        )
+        if snapshot:
+            store.save_line_openclaw_market_snapshot(task_id, snapshot)
+            try:
+                line_bot.push_market_snapshot(
+                    str(row.get("targetId", "")), task_id, snapshot, access_token
+                )
+            except Exception:
+                logging.exception("LINE Flex market snapshot failed; falling back to text")
+                line_bot.push_text(
+                    str(row.get("targetId", "")),
+                    market_snapshot.fallback_text(snapshot), access_token,
+                )
+        elif digest:
             store.save_line_openclaw_news_digest(task_id, digest)
             try:
                 line_bot.push_news_digest(
