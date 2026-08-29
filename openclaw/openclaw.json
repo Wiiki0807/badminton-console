@@ -56,7 +56,7 @@
       }
     },
     "controlUi": {
-      "enabled": false
+      "enabled": true
     }
   },
   "hooks": {
