@@ -36,6 +36,7 @@ LINE_MEMORY_TABLE = "lineMemory"
 LINE_WEBHOOK_TABLE = "lineWebhookEvents"
 LINE_REMINDER_TABLE = "lineReminders"
 LINE_DAILY_BRIEFING_TABLE = "lineDailyBriefings"
+LINE_OPENCLAW_TASK_TABLE = "lineOpenClawTasks"
 LINE_MEMORY_MAX_MESSAGES = 12
 LINE_MEMORY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 LINE_GENERATED_PREFIX = "line-generated/"
@@ -71,6 +72,38 @@ def _blob() -> BlobClient:
 
 def now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def create_line_openclaw_task(task_id: str, target_id: str, prompt: str) -> None:
+    if not task_id or not target_id:
+        raise ValueError("invalid OpenClaw task")
+    entity = {
+        "PartitionKey": "task",
+        "RowKey": task_id,
+        "targetId": target_id[:80],
+        "prompt": " ".join(str(prompt).split())[:1000],
+        "status": "accepted",
+        "createdAt": _epoch(now_ms()),
+        "updatedAt": _epoch(now_ms()),
+    }
+    with _table(LINE_OPENCLAW_TASK_TABLE) as table:
+        table.create_entity(entity)
+
+
+def get_line_openclaw_task(task_id: str) -> dict[str, Any] | None:
+    try:
+        with _table(LINE_OPENCLAW_TASK_TABLE) as table:
+            return dict(table.get_entity("task", task_id))
+    except ResourceNotFoundError:
+        return None
+
+
+def finish_line_openclaw_task(task_id: str, status: str) -> None:
+    with _table(LINE_OPENCLAW_TASK_TABLE) as table:
+        table.update_entity({
+            "PartitionKey": "task", "RowKey": task_id,
+            "status": status[:20], "updatedAt": _epoch(now_ms()),
+        }, mode=UpdateMode.MERGE)
 
 
 def _epoch(value: int) -> EntityProperty:
@@ -420,7 +453,7 @@ def cancel_line_reminder(user_id: str, identifier: str) -> dict[str, Any]:
                     "PartitionKey": row["PartitionKey"], "RowKey": row["RowKey"],
                     "status": "cancelled", "updatedAt": _epoch(now_ms()),
                 }, mode=UpdateMode.MERGE)
-        return {"status": "cancelled_all", "count": len(rows)}
+        return {"status": "cancelled_all", "count": len(rows), "rows": rows}
     matches = _matching_reminders(user_id, identifier)
     if not matches:
         return {"status": "not_found"}

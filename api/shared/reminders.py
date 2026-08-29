@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from shared import inference_hub, store
+from shared import inference_hub, line_openclaw, store
 
 
 TAIPEI = ZoneInfo("Asia/Taipei")
@@ -58,6 +58,12 @@ def handle(text: str, user_id: str, history: list[dict[str, str]] | None = None)
             str(command.get("title", "")),
             int(command.get("due_at_ms", 0)),
         )
+        if line_openclaw.configured():
+            try:
+                line_openclaw.sync_reminder("schedule", [row])
+            except Exception:
+                store.cancel_line_reminder(user_id, row["id"])
+                raise RuntimeError("OpenClaw reminder scheduler unavailable")
         return (
             f"⏰ 已設定提醒 {row['shortId']}\n"
             f"時間：{_local_time(int(row['dueAt']))}\n"
@@ -72,8 +78,12 @@ def handle(text: str, user_id: str, history: list[dict[str, str]] | None = None)
         if result["status"] == "ambiguous":
             return "找到多筆相似提醒，請輸入「取消提醒 編號」。\n\n" + _list_text(result["rows"])
         if result["status"] == "cancelled_all":
+            if line_openclaw.configured():
+                line_openclaw.sync_reminder("cancel", result.get("rows") or [])
             return f"已取消全部 {result['count']} 筆待處理提醒。"
         row = result["row"]
+        if line_openclaw.configured():
+            line_openclaw.sync_reminder("cancel", [row])
         return f"已取消提醒 {row['shortId']}：{row['title']}。"
 
     if action == "update":
@@ -88,6 +98,8 @@ def handle(text: str, user_id: str, history: list[dict[str, str]] | None = None)
         if result["status"] == "ambiguous":
             return "找到多筆相似提醒，請使用提醒編號修改。\n\n" + _list_text(result["rows"])
         row = result["row"]
+        if line_openclaw.configured():
+            line_openclaw.sync_reminder("schedule", [row])
         return (
             f"已更新提醒 {row['shortId']}\n"
             f"時間：{_local_time(int(row['dueAt']))}\n"
