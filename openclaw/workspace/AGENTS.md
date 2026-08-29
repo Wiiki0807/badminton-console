@@ -23,3 +23,8 @@ not exposed until a bounded emergency-stop-first API exists.
 Reminders are owned by OpenClaw Automations and are isolated by the requesting
 LINE user. Do not create a reminder for a different recipient. Use Asia/Taipei
 unless the request explicitly supplies another timezone.
+
+For current, latest, or recent news, company updates, and industry developments,
+use the `verified-news-digest` skill. Do not answer those requests from model
+memory alone. Discover candidates with Tavily, verify important original sources,
+label confirmation status, and preserve supporting links.
