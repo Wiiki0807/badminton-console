@@ -57,12 +57,25 @@ class LineBotAnswerTests(unittest.TestCase):
         self.assertNotIn("U123", entity["PartitionKey"])
         self.assertEqual("2026-08-29", entity["RowKey"])
 
+    @mock.patch("shared.store._table")
+    def test_new_user_welcome_is_claimed_only_once(self, table_factory):
+        table = mock.MagicMock()
+        table.create_entity.side_effect = [None, store.ResourceExistsError("exists")]
+        table_factory.return_value.__enter__.return_value = table
+
+        self.assertTrue(store.claim_line_welcome("U-new"))
+        self.assertFalse(store.claim_line_welcome("U-new"))
+        entity = table.create_entity.call_args_list[0].args[0]
+        self.assertNotIn("U-new", entity["PartitionKey"])
+        self.assertEqual("welcome-v1", entity["RowKey"])
+
     @mock.patch("shared.daily_briefing.store.save_line_daily_briefing")
     @mock.patch("shared.daily_briefing.build_today")
     @mock.patch("shared.daily_briefing.store.load_line_daily_briefing", return_value="cached")
     @mock.patch("shared.daily_briefing.store.claim_line_daily_briefing", return_value=True)
+    @mock.patch("shared.daily_briefing.inference_hub.is_line_owner", return_value=True)
     def test_daily_briefing_reuses_shared_daily_cache(
-        self, claim, load, build, save
+        self, _owner, claim, load, build, save
     ):
         result = daily_briefing.for_first_message(
             "U123", datetime(2026, 8, 29, 8, 0, tzinfo=timezone(timedelta(hours=8)))
@@ -73,6 +86,44 @@ class LineBotAnswerTests(unittest.TestCase):
         load.assert_called_once_with("2026-08-29")
         build.assert_not_called()
         save.assert_not_called()
+
+    @mock.patch("shared.daily_briefing.store.claim_line_daily_briefing")
+    @mock.patch("shared.daily_briefing.inference_hub.is_line_owner", return_value=False)
+    def test_daily_briefing_is_never_created_for_non_owner(self, _owner, claim):
+        self.assertEqual("", daily_briefing.for_first_message("U-other"))
+        claim.assert_not_called()
+
+    @mock.patch("function_app.store.claim_line_welcome", return_value=True)
+    @mock.patch("function_app.inference_hub.is_line_owner", return_value=False)
+    def test_non_owner_first_message_gets_welcome_not_private_briefing(
+        self, _owner, claim_welcome
+    ):
+        future = function_app._start_daily_briefing(
+            {"type": "user", "userId": "U-new"}, "text"
+        )
+
+        result = future.result(timeout=2)
+        self.assertIn("歡迎加入 RocketAI", result)
+        self.assertIn("多用途 AI 助手", result)
+        self.assertNotIn("NVIDIA／AI／機器人焦點", result)
+        claim_welcome.assert_called_once_with("U-new")
+
+    @mock.patch("function_app.daily_briefing.for_first_message", return_value="主人每日摘要")
+    @mock.patch("function_app.inference_hub.is_line_owner", return_value=True)
+    def test_owner_first_message_gets_daily_briefing(self, _owner, briefing):
+        future = function_app._start_daily_briefing(
+            {"type": "user", "userId": "U-owner"}, "text"
+        )
+
+        self.assertEqual("主人每日摘要", future.result(timeout=2))
+        briefing.assert_called_once_with("U-owner")
+
+    @mock.patch.dict("os.environ", {"LINE_OWNER_USER_ID": "U-owner"}, clear=True)
+    def test_owner_id_match_fails_closed(self):
+        inference_hub._deployment_settings.cache_clear()
+        self.assertTrue(inference_hub.is_line_owner("U-owner"))
+        self.assertFalse(inference_hub.is_line_owner("U-other"))
+        self.assertFalse(inference_hub.is_line_owner(""))
 
     @mock.patch("shared.inference_hub._json_request")
     def test_daily_weather_forecast_requests_banqiao_daily_fields(self, json_request):

@@ -31,11 +31,17 @@ DAILY_BRIEFING_EXECUTOR = ThreadPoolExecutor(max_workers=2)
 
 
 def _start_daily_briefing(source: dict, message_type: str) -> Future | None:
-    """Start the private user's daily briefing while their normal answer is generated."""
+    """Start the owner's daily briefing or a non-owner's one-time welcome."""
     user_id = str(source.get("userId", "")).strip()
     if message_type != "text" or not user_id or line_bot.is_group_source(source):
         return None
-    return DAILY_BRIEFING_EXECUTOR.submit(daily_briefing.for_first_message, user_id)
+    if inference_hub.is_line_owner(user_id):
+        return DAILY_BRIEFING_EXECUTOR.submit(daily_briefing.for_first_message, user_id)
+
+    def new_user_welcome() -> str:
+        return line_bot.welcome_message() if store.claim_line_welcome(user_id) else ""
+
+    return DAILY_BRIEFING_EXECUTOR.submit(new_user_welcome)
 
 
 def _reply_with_daily_briefing(

@@ -299,6 +299,13 @@ def _setting(name: str, default: str = "") -> str:
     return os.environ.get(name, "").strip() or _deployment_settings().get(name, "").strip() or default
 
 
+def is_line_owner(user_id: str) -> bool:
+    """Match the private briefing owner without exposing or guessing their LINE ID."""
+    expected = _setting("LINE_OWNER_USER_ID")
+    candidate = str(user_id or "").strip()
+    return bool(expected and candidate) and hmac.compare_digest(candidate, expected)
+
+
 def _public_state(state: dict[str, Any]) -> dict[str, Any]:
     """Keep the prompt bounded and exclude storage/internal fields by allow-list."""
     limits = {"courts": 8, "recent": 8, "stats": 40, "players": 60, "roster": 60}

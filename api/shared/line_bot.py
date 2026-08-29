@@ -296,6 +296,20 @@ def help_message() -> str:
     )
 
 
+def welcome_message() -> str:
+    return (
+        "歡迎加入 RocketAI！我是小羽 🏸\n"
+        "我是一位多用途 AI 助手，可以協助：\n"
+        "• 一般問答、寫作、翻譯、摘要與規劃\n"
+        "• 查詢日期、時間、天氣與最新網路資訊\n"
+        "• 理解圖片；明確要求時進行 OCR\n"
+        "• 依文字產生圖片，或修改你提供的照片\n"
+        "• 摘要 10 MB 以下的文字型 PDF\n"
+        "• 查詢羽球場次、比分、戰績與積分\n\n"
+        "直接用自然的方式告訴我想做什麼即可；輸入「看板」可查看羽球資訊。"
+    )
+
+
 def needs_profile(text: str) -> bool:
     normalized = _normalize(text)
     return any(word in normalized for word in ("自己", "自已", "本人", "我的"))
