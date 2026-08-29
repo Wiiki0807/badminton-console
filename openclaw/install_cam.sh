@@ -34,13 +34,13 @@ set_env() {
 
 bridge_token="$(get_env OPENCLAW_BRIDGE_TOKEN)"
 pair_code="$(get_env OPENCLAW_LINE_PAIR_CODE)"
-gateway_token_file="/mnt/c/Nvidia/robot_voice_hub/hub-data/line-chat-gateway-token.txt"
 callback_token=""
 [[ -n "${bridge_token}" ]] || bridge_token="$(openssl rand -base64 48 | tr -d '\n')"
 [[ -n "${pair_code}" ]] || pair_code="$(openssl rand -hex 6)"
-if [[ -s "${gateway_token_file}" ]]; then
-  callback_token="$(printf '%s' 'rocketai-openclaw-callback-v1' | \
-    openssl dgst -sha256 -hmac "$(tr -d '\r\n' < "${gateway_token_file}")" \
+hub_token="$(get_env NV_INFER_HUB_TOKEN)"
+if [[ -n "${hub_token}" ]]; then
+  callback_token="$(printf '%s' 'rocketai-line-reminder-dispatch-v1' | \
+    openssl dgst -sha256 -hmac "${hub_token}" \
     -binary | xxd -p -c 256)"
 fi
 [[ -n "${callback_token}" ]] || callback_token="$(openssl rand -hex 32)"
