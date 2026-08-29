@@ -571,6 +571,22 @@ class LineBotAnswerTests(unittest.TestCase):
         )
         classify.assert_called_once()
 
+    @mock.patch("shared.line_bot.inference_hub.classify_image_intent")
+    def test_supplied_photo_edit_takes_precedence_over_generation_words(self, classify):
+        self.assertEqual(
+            "image_edit",
+            line_bot.image_request_intent("根據傳入照片產生漫畫風格", []),
+        )
+        self.assertEqual(
+            "image_edit",
+            line_bot.image_request_intent("用我下一張照片做成水彩插畫", []),
+        )
+        self.assertEqual(
+            "image_generate",
+            line_bot.image_request_intent("產生一個漫畫女生的圖片", []),
+        )
+        classify.assert_not_called()
+
     def test_semantic_image_edit_marker_is_consumed_by_next_image(self):
         history = [{
             "role": "user",
