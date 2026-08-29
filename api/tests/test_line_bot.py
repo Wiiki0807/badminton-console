@@ -202,6 +202,17 @@ class LineBotAnswerTests(unittest.TestCase):
         self.assertTrue(inference_hub.openclaw_callback_token_matches(derived))
         self.assertFalse(inference_hub.openclaw_callback_token_matches("hub-secret"))
 
+    @mock.patch.dict(
+        "os.environ",
+        {"LINE_REMINDER_DISPATCH_TOKEN": "existing-callback-token"},
+        clear=True,
+    )
+    def test_openclaw_callback_accepts_existing_reminder_callback_token(self):
+        inference_hub._deployment_settings.cache_clear()
+        self.assertTrue(
+            inference_hub.openclaw_callback_token_matches("existing-callback-token")
+        )
+
     @mock.patch("shared.store.list_line_reminders", return_value=[])
     @mock.patch("shared.store._table")
     @mock.patch("shared.store.now_ms", return_value=1_900_000_000_000)

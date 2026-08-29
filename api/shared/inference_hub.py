@@ -366,6 +366,10 @@ def openclaw_callback_token_matches(candidate: str) -> bool:
     configured_token = _setting("LINE_OPENCLAW_CALLBACK_TOKEN")
     if configured_token and hmac.compare_digest(candidate, configured_token):
         return True
+    # The existing reminder-dispatch token is already a callback-class secret,
+    # is deployed on both Azure and cam, and remains valid after polling stops.
+    if reminder_dispatch_token_matches(candidate):
+        return True
     hub_token = _setting("INFERENCE_HUB_TOKEN")
     if not hub_token:
         return False
