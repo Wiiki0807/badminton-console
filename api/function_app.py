@@ -57,6 +57,23 @@ def _reply_with_daily_briefing(
     line_bot.reply_texts(reply_token, messages, access_token)
 
 
+def _push_image_processing_notice(
+    source: dict, webhook_event_id: str, access_token: str
+) -> None:
+    """Push exactly one visible notice when a long image operation actually starts."""
+    target_id = line_bot.push_target_id(source)
+    if not target_id:
+        return
+    seed = str(webhook_event_id or uuid.uuid4())
+    retry_key = str(uuid.uuid5(uuid.NAMESPACE_URL, f"rocketai:image-progress:{seed}"))
+    line_bot.push_text(
+        target_id,
+        "🎨 圖片處理中，請稍等一下……",
+        access_token,
+        retry_key=retry_key,
+    )
+
+
 def json_response(value, status: int = 200, headers: dict[str, str] | None = None) -> func.HttpResponse:
     merged = {"Cache-Control": "no-store", "Content-Type": JSON_CONTENT_TYPE}
     merged.update(headers or {})
@@ -277,8 +294,19 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                 except Exception:
                     logging.exception("LINE memory write failed; reminder reply was delivered")
                 continue
-            if message_type == "text" and line_bot.is_image_generation_request(incoming_text):
+            image_intent = (
+                line_bot.image_request_intent(incoming_text, history)
+                if message_type == "text"
+                else "chat"
+            )
+            if image_intent == "image_generate":
                 try:
+                    try:
+                        _push_image_processing_notice(
+                            source, str(event.get("webhookEventId", "")), access_token
+                        )
+                    except Exception:
+                        logging.exception("LINE image processing notice failed; continuing")
                     generated, generated_type = inference_hub.generate_image(incoming_text)
                     original_url, preview_url = store.upload_line_generated_image(
                         generated, generated_type
@@ -299,6 +327,19 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                         "影像產生服務目前暫時失敗，請稍後再試一次。",
                         access_token,
                     )
+                continue
+            if image_intent == "image_edit":
+                text = "請傳送要修改的圖片；收到後小羽會依照這項要求處理。"
+                _reply_with_daily_briefing(
+                    reply_token, text, access_token, briefing_future
+                )
+                try:
+                    store.add_line_memory(
+                        conversation_id, "user", f"[待處理圖片編輯] {incoming_text}"
+                    )
+                    store.add_line_memory(conversation_id, "assistant", text)
+                except Exception:
+                    logging.exception("LINE memory write failed; image edit request was acknowledged")
                 continue
             display_name = ""
             if line_bot.needs_profile(incoming_text):
@@ -350,6 +391,12 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                 edit_request = line_bot.history_image_edit_request(history)
                 if edit_request:
                     try:
+                        try:
+                            _push_image_processing_notice(
+                                source, str(event.get("webhookEventId", "")), access_token
+                            )
+                        except Exception:
+                            logging.exception("LINE image processing notice failed; continuing")
                         generated, generated_type = inference_hub.edit_image(
                             image_data_url, edit_request
                         )
