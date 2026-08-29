@@ -1037,6 +1037,55 @@ def push_market_snapshot(
     )
 
 
+def artifact_flex(filename: str, download_url: str, size: int, summary: str = "") -> dict[str, Any]:
+    """Build a compact file card backed by a short-lived HTTPS download URL."""
+    if not filename or not download_url.startswith("https://"):
+        raise ValueError("invalid artifact card")
+    size_text = f"{size / 1024:.1f} KB" if size >= 1024 else f"{size} bytes"
+    contents: list[dict[str, Any]] = [
+        {"type": "text", "text": "📄 OpenClaw 檔案已完成", "weight": "bold",
+         "size": "lg", "wrap": True},
+        {"type": "text", "text": filename[:120], "size": "sm", "weight": "bold",
+         "color": "#333333", "wrap": True, "margin": "md"},
+        {"type": "text", "text": f"大小：{size_text} · 下載連結 24 小時有效",
+         "size": "xs", "color": "#777777", "wrap": True, "margin": "xs"},
+    ]
+    bounded_summary = " ".join(str(summary or "").split())[:300]
+    if bounded_summary:
+        contents.append({
+            "type": "text", "text": bounded_summary, "size": "sm", "color": "#555555",
+            "wrap": True, "margin": "lg", "maxLines": 5,
+        })
+    return {
+        "type": "flex",
+        "altText": f"OpenClaw 檔案：{filename}"[:400],
+        "contents": {
+            "type": "bubble", "size": "kilo",
+            "body": {"type": "box", "layout": "vertical", "contents": contents},
+            "footer": {
+                "type": "box", "layout": "vertical", "contents": [{
+                    "type": "button", "style": "primary", "color": "#2E7D32",
+                    "action": {"type": "uri", "label": "下載檔案", "uri": download_url},
+                }],
+            },
+        },
+    }
+
+
+def push_artifact(
+    target_id: str, task_id: str, filename: str, download_url: str, size: int,
+    summary: str, access_token: str,
+) -> None:
+    if not target_id:
+        raise ValueError("missing LINE push target")
+    _send_messages(
+        LINE_PUSH_URL,
+        {"to": target_id, "messages": [artifact_flex(filename, download_url, size, summary)]},
+        access_token,
+        retry_key=task_id,
+    )
+
+
 def push_text(
     target_id: str, text: str, access_token: str, *, retry_key: str = ""
 ) -> None:
