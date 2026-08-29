@@ -55,6 +55,11 @@ IMAGE_EDIT_INTENT_PATTERN = re.compile(
     r"(?:漫畫|卡通|動畫|插畫|水彩|油畫|素描).{0,30}(?:轉成|改成|變成|畫成|做成|生成|產生|製作|風格化|重繪)",
     re.IGNORECASE,
 )
+IMAGE_GENERATION_INTENT_PATTERN = re.compile(
+    r"(?:產生|生成|創作|繪製|畫|做|製作).{0,120}(?:圖片|圖像|插圖|畫面|照片)|"
+    r"(?:圖片|圖像|插圖).{0,40}(?:產生|生成|創作|繪製)",
+    re.IGNORECASE,
+)
 BOT_WAKE_PATTERN = re.compile(
     r"^\s*@?(?:Rocket\s*AI|小羽)(?:\s|[，,：:、])*",
     re.IGNORECASE,
@@ -421,6 +426,14 @@ def history_image_edit_request(history: list[dict[str, str]]) -> str:
             return text[:1200]
         return ""
     return ""
+
+
+def is_image_generation_request(text: str) -> bool:
+    """Return true only for an explicit text-to-image request."""
+    bounded = str(text or "").strip()
+    if not bounded or OCR_INTENT_PATTERN.search(bounded):
+        return False
+    return bool(IMAGE_GENERATION_INTENT_PATTERN.search(bounded))
 
 
 def history_has_recent_image(history: list[dict[str, str]]) -> bool:
