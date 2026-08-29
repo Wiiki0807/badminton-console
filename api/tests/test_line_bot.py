@@ -543,7 +543,12 @@ class LineBotAnswerTests(unittest.TestCase):
         self.assertTrue(line_bot.is_image_generation_request(
             "產生一個女人坐在長沙發上，背後是海洋的圖片"
         ))
+        self.assertTrue(line_bot.is_image_generation_request(
+            "產出一個機器手臂夾取瓶子的圖片，背景在工廠產線上"
+        ))
         self.assertTrue(line_bot.is_image_generation_request("幫我畫一張海邊插圖"))
+        self.assertTrue(line_bot.is_image_generation_request("給我一張未來城市的圖"))
+        self.assertTrue(line_bot.is_image_generation_request("生一張羽球場照片"))
         self.assertFalse(line_bot.is_image_generation_request("請描述這張圖片"))
         self.assertFalse(line_bot.is_image_generation_request("下一張圖片請 OCR"))
 
