@@ -307,6 +307,15 @@ def conversation_id(source: dict[str, Any]) -> str:
     return ""
 
 
+def push_target_id(source: dict[str, Any]) -> str:
+    """Return the LINE recipient ID for Push API messages."""
+    for key in ("groupId", "roomId", "userId"):
+        value = str(source.get(key, "")).strip()
+        if value:
+            return value
+    return ""
+
+
 def image_context_id(source: dict[str, Any]) -> str:
     """Keep recent pixels private to their sender, including inside shared group memory."""
     conversation = conversation_id(source)
@@ -417,6 +426,8 @@ def history_image_edit_request(history: list[dict[str, str]]) -> str:
         if str(item.get("role", "")) != "user":
             continue
         text = str(item.get("content", "")).strip()
+        if text.startswith("[待處理圖片編輯]"):
+            return text.removeprefix("[待處理圖片編輯]").strip()[:1200]
         if text.startswith("[使用者傳送一張圖片"):
             return ""
         if (
@@ -436,6 +447,24 @@ def is_image_generation_request(text: str) -> bool:
     if not bounded or OCR_INTENT_PATTERN.search(bounded):
         return False
     return bool(IMAGE_GENERATION_INTENT_PATTERN.search(bounded))
+
+
+def image_request_intent(
+    text: str, history: list[dict[str, str]] | None = None
+) -> str:
+    """Use deterministic fast paths, then 4o-mini for unmatched image semantics."""
+    bounded = str(text or "").strip()
+    if not bounded:
+        return "chat"
+    if is_image_generation_request(bounded):
+        return "image_generate"
+    if (
+        IMAGE_EDIT_INTENT_PATTERN.search(bounded)
+        and (NEXT_IMAGE_PATTERN.search(bounded) or IMAGE_REQUEST_PATTERN.search(bounded))
+        and not OCR_INTENT_PATTERN.search(bounded)
+    ):
+        return "image_edit"
+    return str(inference_hub.classify_image_intent(bounded, history or []).get("intent", "chat"))
 
 
 def history_has_recent_image(history: list[dict[str, str]]) -> bool:

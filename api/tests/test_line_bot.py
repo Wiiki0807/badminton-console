@@ -552,6 +552,72 @@ class LineBotAnswerTests(unittest.TestCase):
         self.assertFalse(line_bot.is_image_generation_request("請描述這張圖片"))
         self.assertFalse(line_bot.is_image_generation_request("下一張圖片請 OCR"))
 
+    @mock.patch("shared.line_bot.inference_hub.classify_image_intent")
+    def test_image_intent_uses_regex_fast_path_then_semantic_fallback(self, classify):
+        self.assertEqual(
+            "image_generate",
+            line_bot.image_request_intent("產生一張海洋圖片", []),
+        )
+        classify.assert_not_called()
+
+        classify.return_value = {
+            "intent": "image_generate",
+            "confidence": 0.96,
+            "reason": "要求將想像轉成視覺",
+        }
+        self.assertEqual(
+            "image_generate",
+            line_bot.image_request_intent("讓我看看機器手臂工作的樣子", []),
+        )
+        classify.assert_called_once()
+
+    def test_semantic_image_edit_marker_is_consumed_by_next_image(self):
+        history = [{
+            "role": "user",
+            "content": "[待處理圖片編輯] 讓接下來的照片看起來像水彩作品",
+        }]
+        self.assertEqual(
+            "讓接下來的照片看起來像水彩作品",
+            line_bot.history_image_edit_request(history),
+        )
+
+    @mock.patch("shared.inference_hub.request.urlopen")
+    @mock.patch.dict(
+        "os.environ",
+        {"INFERENCE_HUB_URL": "https://hub.test", "INFERENCE_HUB_TOKEN": "test-token"},
+        clear=True,
+    )
+    def test_image_semantic_classifier_returns_only_high_confidence_intent(self, urlopen):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({
+            "choices": [{"message": {"content": json.dumps({
+                "intent": "image_generate",
+                "confidence": 0.96,
+                "reason": "要求呈現新畫面",
+            })}}]
+        }).encode()
+        urlopen.return_value = response
+
+        result = inference_hub.classify_image_intent(
+            "讓我看看機器手臂工作的樣子", []
+        )
+
+        self.assertEqual("image_generate", result["intent"])
+        sent = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertEqual("openai/openai/gpt-4o-mini", sent["model"])
+        self.assertEqual([], sent["tool_names"])
+
+    @mock.patch("function_app.line_bot.push_text")
+    def test_long_image_notice_is_one_push_with_stable_retry_key(self, push):
+        source = {"type": "user", "userId": "U123"}
+
+        function_app._push_image_processing_notice(source, "event-123", "token")
+
+        push.assert_called_once()
+        args, kwargs = push.call_args
+        self.assertEqual(("U123", "🎨 圖片處理中，請稍等一下……", "token"), args)
+        self.assertRegex(kwargs["retry_key"], r"^[0-9a-f-]{36}$")
+
     @mock.patch("shared.inference_hub.request.urlopen")
     @mock.patch.dict(
         "os.environ",
