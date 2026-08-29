@@ -1,0 +1,101 @@
+# Desired two-container revision. Replace IMAGE_TAG after the API image exists.
+# Secret values are deliberately not stored here; create the named Container App
+# secrets before applying this template with `az containerapp update --yaml`.
+properties:
+  configuration:
+    activeRevisionsMode: Single
+    ingress:
+      external: true
+      allowInsecure: false
+      targetPort: 80
+      transport: Auto
+  template:
+    containers:
+      - name: a9badminton
+        image: a9acr.azurecr.io/badminton-api:IMAGE_TAG
+        resources:
+          cpu: 0.75
+          memory: 1.5Gi
+        env:
+          - name: FUNCTIONS_WORKER_RUNTIME
+            value: python
+          - name: AzureWebJobsStorage
+            secretRef: azure-webjobs-storage
+          - name: STORAGE_CONNECTION_STRING
+            secretRef: storage-connection-string
+          - name: LINE_CHANNEL_SECRET
+            secretRef: line-channel-secret
+          - name: LINE_CHANNEL_ACCESS_TOKEN
+            secretRef: line-channel-access-token
+          - name: INFERENCE_HUB_URL
+            value: http://nv-ws-tommy.tail762218.ts.net:8791
+          - name: INFERENCE_HUB_TOKEN
+            secretRef: inference-hub-token
+          - name: INFERENCE_HUB_MODEL
+            value: azure/openai/gpt-5.6-sol
+          - name: INFERENCE_HUB_TIMEOUT_SECONDS
+            value: "25"
+          - name: TAVILY_API_KEY
+            secretRef: tavily-api-key
+          - name: DAILY_BRIEFING_LOCATION
+            value: 新北市板橋區
+          - name: LIVE_BOARD_URL
+            value: https://mango-bay-0083f4c00.7.azurestaticapps.net
+          - name: LINE_OPENCLAW_CALLBACK_URL
+            value: https://mango-bay-0083f4c00.7.azurestaticapps.net/api/line-openclaw-callback
+          - name: LINE_OPENCLAW_REMINDER_CALLBACK_URL
+            value: https://mango-bay-0083f4c00.7.azurestaticapps.net/api/line-reminders-dispatch
+          - name: LINE_OPENCLAW_CALLBACK_TOKEN
+            secretRef: openclaw-callback-token
+          - name: LINE_REMINDER_DISPATCH_TOKEN
+            secretRef: reminder-dispatch-token
+          - name: HTTP_PROXY
+            value: http://127.0.0.1:1055
+          - name: NO_PROXY
+            value: 127.0.0.1,localhost,169.254.169.254
+        probes:
+          - type: Liveness
+            httpGet:
+              path: /api/health
+              port: 80
+              scheme: HTTP
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          - type: Readiness
+            httpGet:
+              path: /api/health
+              port: 80
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+      - name: tailscale
+        image: ghcr.io/tailscale/tailscale:stable
+        resources:
+          cpu: 0.25
+          memory: 0.5Gi
+        env:
+          - name: TS_AUTHKEY
+            secretRef: tailscale-authkey
+          - name: TS_USERSPACE
+            value: "true"
+          - name: TS_HOSTNAME
+            value: a9badminton-api
+          - name: TS_STATE_DIR
+            value: /var/lib/tailscale
+          - name: TS_OUTBOUND_HTTP_PROXY_LISTEN
+            value: :1055
+          - name: TS_EXTRA_ARGS
+            value: --advertise-tags=tag:azure-container-apps
+        volumeMounts:
+          - volumeName: tailscale-state
+            mountPath: /var/lib/tailscale
+    scale:
+      minReplicas: 1
+      maxReplicas: 1
+    volumes:
+      - name: tailscale-state
+        storageType: EmptyDir

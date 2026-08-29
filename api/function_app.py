@@ -78,6 +78,12 @@ def read_body(req: func.HttpRequest) -> dict:
     return body
 
 
+@app.route(route="health", methods=["GET"])
+def health(req: func.HttpRequest) -> func.HttpResponse:
+    """Dependency-free liveness endpoint for Container Apps revisions."""
+    return json_response({"ok": True, "service": "badminton-api"})
+
+
 def summarize_line_pdf_message(message: dict, access_token: str) -> str:
     """Download, extract and summarize one bounded LINE PDF file message."""
     file_name = str(message.get("fileName", "document.pdf"))[:120]
