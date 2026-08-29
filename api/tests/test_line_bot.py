@@ -189,6 +189,19 @@ class LineBotAnswerTests(unittest.TestCase):
         self.assertTrue(inference_hub.reminder_dispatch_token_matches(derived))
         self.assertFalse(inference_hub.reminder_dispatch_token_matches("hub-secret"))
 
+    @mock.patch.dict(
+        "os.environ",
+        {"INFERENCE_HUB_TOKEN": "hub-secret", "LINE_OPENCLAW_CALLBACK_TOKEN": ""},
+        clear=True,
+    )
+    def test_openclaw_callback_token_is_domain_separated_from_hub_token(self):
+        inference_hub._deployment_settings.cache_clear()
+        derived = hmac.new(
+            b"hub-secret", b"rocketai-openclaw-callback-v1", hashlib.sha256
+        ).hexdigest()
+        self.assertTrue(inference_hub.openclaw_callback_token_matches(derived))
+        self.assertFalse(inference_hub.openclaw_callback_token_matches("hub-secret"))
+
     @mock.patch("shared.store.list_line_reminders", return_value=[])
     @mock.patch("shared.store._table")
     @mock.patch("shared.store.now_ms", return_value=1_900_000_000_000)

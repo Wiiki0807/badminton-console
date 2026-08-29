@@ -27,6 +27,7 @@ GROUP_CLASSIFIER_TIMEOUT_SECONDS = 5.0
 REMINDER_MODEL = "openai/openai/gpt-4o-mini"
 REMINDER_TIMEOUT_SECONDS = 15.0
 REMINDER_TOKEN_CONTEXT = b"rocketai-line-reminder-dispatch-v1"
+OPENCLAW_CALLBACK_TOKEN_CONTEXT = b"rocketai-openclaw-callback-v1"
 MAX_REPLY_CHARS = 4500
 MAX_DOCUMENT_CHARS = 18_000
 MAX_TOOL_CALLS = 4
@@ -356,6 +357,22 @@ def reminder_dispatch_token_matches(candidate: str) -> bool:
                 hub_token.encode("utf-8"), REMINDER_TOKEN_CONTEXT, hashlib.sha256
             ).hexdigest()
     return bool(expected and candidate and hmac.compare_digest(candidate, expected))
+
+
+def openclaw_callback_token_matches(candidate: str) -> bool:
+    """Accept the configured token or a domain-separated Hub-token derivation."""
+    if not candidate:
+        return False
+    configured_token = _setting("LINE_OPENCLAW_CALLBACK_TOKEN")
+    if configured_token and hmac.compare_digest(candidate, configured_token):
+        return True
+    hub_token = _setting("INFERENCE_HUB_TOKEN")
+    if not hub_token:
+        return False
+    derived = hmac.new(
+        hub_token.encode("utf-8"), OPENCLAW_CALLBACK_TOKEN_CONTEXT, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(candidate, derived)
 
 
 def looks_like_reminder_request(text: str) -> bool:
