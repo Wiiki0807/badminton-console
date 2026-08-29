@@ -71,7 +71,23 @@
     "webhookToken": "${OPENCLAW_LINE_CALLBACK_TOKEN}",
     "sessionRetention": "24h"
   },
+  "plugins": {
+    "entries": {
+      "tavily": {
+        "enabled": true
+      }
+    }
+  },
   "tools": {
+    "web": {
+      "search": {
+        "enabled": true,
+        "provider": "tavily",
+        "maxResults": 5,
+        "timeoutSeconds": 30,
+        "cacheTtlMinutes": 15
+      }
+    },
     "exec": {
       "host": "gateway",
       "mode": "allowlist",
