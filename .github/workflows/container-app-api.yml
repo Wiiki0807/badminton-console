@@ -1,0 +1,114 @@
+name: Container App API
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - ".github/workflows/container-app-api.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "api/**"
+      - ".github/workflows/container-app-api.yml"
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_REPOSITORY: badminton-api
+
+jobs:
+  build:
+    name: Build API container
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build immutable image locally
+        run: |
+          docker build \
+            --build-arg VCS_REF="${GITHUB_SHA}" \
+            --tag "badminton-api:${GITHUB_SHA}" \
+            api
+
+  deploy:
+    name: Push ACR and deploy Container App
+    if: >-
+      github.event_name != 'pull_request' &&
+      vars.AZURE_CLIENT_ID != '' &&
+      vars.AZURE_TENANT_ID != '' &&
+      vars.AZURE_SUBSCRIPTION_ID != '' &&
+      vars.ACR_LOGIN_SERVER != '' &&
+      vars.AZURE_CONTAINER_APP_NAME != '' &&
+      vars.AZURE_RESOURCE_GROUP != ''
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    environment: production
+    concurrency:
+      group: badminton-container-app-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Build and push immutable ACR image
+        env:
+          ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
+        run: |
+          set -euo pipefail
+          acr_name="${ACR_LOGIN_SERVER%%.*}"
+          image="${ACR_LOGIN_SERVER}/${IMAGE_REPOSITORY}:${GITHUB_SHA}"
+          az acr login --name "${acr_name}"
+          docker build \
+            --build-arg VCS_REF="${GITHUB_SHA}" \
+            --tag "${image}" \
+            api
+          docker push "${image}"
+          echo "IMAGE=${image}" >> "${GITHUB_ENV}"
+      - name: Deploy a new Container App revision
+        env:
+          CONTAINER_APP: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          set -euo pipefail
+          az extension add --name containerapp --upgrade --yes
+          az containerapp update \
+            --name "${CONTAINER_APP}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --image "${IMAGE}" \
+            --min-replicas 1 \
+            --max-replicas 1 \
+            --revision-suffix "${GITHUB_SHA::7}" \
+            --output none
+          az containerapp ingress enable \
+            --name "${CONTAINER_APP}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --type external \
+            --target-port 80 \
+            --transport auto \
+            --allow-insecure false \
+            --output none
+      - name: Verify the production health endpoint
+        env:
+          CONTAINER_APP: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          set -euo pipefail
+          fqdn="$(az containerapp show \
+            --name "${CONTAINER_APP}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)"
+          test -n "${fqdn}"
+          curl --fail --show-error --silent \
+            --retry 12 --retry-all-errors --retry-delay 5 \
+            "https://${fqdn}/api/health" \
+            | python -c 'import json,sys; value=json.load(sys.stdin); assert value == {"ok": True, "service": "badminton-api"}'

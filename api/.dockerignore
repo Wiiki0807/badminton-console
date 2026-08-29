@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.python_packages/
+.venv/
+local.settings.json
+shared/deployment_settings.json
+tests/
