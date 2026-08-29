@@ -587,6 +587,21 @@ class LineBotAnswerTests(unittest.TestCase):
         )
         classify.assert_not_called()
 
+    @mock.patch("shared.line_bot.inference_hub.classify_image_intent")
+    def test_recent_photo_style_request_edits_cached_image(self, classify):
+        history = [{
+            "role": "user",
+            "content": "[使用者傳送一張圖片，要求一般圖片理解]",
+        }]
+        text = "可否依據剛才這照片轉換成水彩吉卜力風格"
+
+        self.assertEqual("image_edit", line_bot.image_request_intent(text, history))
+        self.assertTrue(line_bot.should_edit_recent_image(text, history))
+        self.assertFalse(line_bot.should_edit_recent_image(
+            "請把我下一張照片轉換成水彩風格", history
+        ))
+        classify.assert_not_called()
+
     def test_semantic_image_edit_marker_is_consumed_by_next_image(self):
         history = [{
             "role": "user",
@@ -1104,6 +1119,57 @@ class LineBotAnswerTests(unittest.TestCase):
         reply.assert_not_called()
         read_state.assert_not_called()
         add_memory.assert_not_called()
+
+    @mock.patch.dict(
+        "os.environ",
+        {"LINE_CHANNEL_SECRET": "secret", "LINE_CHANNEL_ACCESS_TOKEN": "token"},
+        clear=True,
+    )
+    def test_webhook_edits_recent_image_instead_of_generating_from_scratch(self):
+        text = "可否依據剛才這照片轉換成水彩吉卜力風格"
+        history = [{
+            "role": "user",
+            "content": "[使用者傳送一張圖片，要求一般圖片理解]",
+        }]
+        body = json.dumps({"events": [{
+            "type": "message",
+            "webhookEventId": "event-recent-edit",
+            "replyToken": "reply-token",
+            "source": {"type": "user", "userId": "U1"},
+            "message": {"id": "M2", "type": "text", "text": text},
+        }]}).encode("utf-8")
+        req = function_app.func.HttpRequest(
+            method="POST",
+            url="https://example.test/api/line-webhook",
+            headers={"x-line-signature": "valid"},
+            body=body,
+        )
+        with (
+            mock.patch("function_app.line_bot.verify_signature", return_value=True),
+            mock.patch("function_app.store.claim_line_webhook_event", return_value=True),
+            mock.patch("function_app.store.list_line_memory", return_value=history),
+            mock.patch("function_app._start_daily_briefing", return_value=None),
+            mock.patch("function_app.line_bot.show_loading_animation"),
+            mock.patch("function_app.inference_hub.looks_like_reminder_request", return_value=False),
+            mock.patch("function_app.store.load_line_recent_image", return_value="data:image/jpeg;base64,YQ==") as load,
+            mock.patch("function_app._push_image_processing_notice") as notice,
+            mock.patch("function_app.inference_hub.edit_image", return_value=(b"png", "image/png")) as edit,
+            mock.patch(
+                "function_app.store.upload_line_generated_image",
+                return_value=("https://blob.test/original.png", "https://blob.test/preview.jpg"),
+            ),
+            mock.patch("function_app.line_bot.reply_image") as reply_image,
+            mock.patch("function_app.store.add_line_memory"),
+            mock.patch("function_app.inference_hub.generate_image") as generate,
+        ):
+            response = function_app.line_webhook(req)
+
+        self.assertEqual(200, response.status_code)
+        load.assert_called_once_with("user:U1")
+        notice.assert_called_once()
+        edit.assert_called_once_with("data:image/jpeg;base64,YQ==", text)
+        generate.assert_not_called()
+        reply_image.assert_called_once()
 
     @mock.patch("shared.inference_hub.request.urlopen")
     @mock.patch.dict(
