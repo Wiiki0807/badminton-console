@@ -26,6 +26,46 @@ class LineOpenClawTests(unittest.TestCase):
             line_openclaw.parse_command("小羽 配對 abc12345"),
         )
 
+    def test_explicit_robot_commands_are_strictly_parsed(self):
+        self.assertEqual(
+            {"action": "play", "robot": "x1", "gesture": "away"},
+            line_openclaw.parse_robot_command("小羽 X1 播放 away"),
+        )
+        self.assertEqual(
+            {"action": "play", "robot": "x1", "gesture": "thanks"},
+            line_openclaw.parse_robot_command("RocketAI 請做動作 X1 thanks"),
+        )
+        self.assertEqual(
+            {"action": "stop", "robot": "x1"},
+            line_openclaw.parse_robot_command("小羽 X1 停止動作"),
+        )
+        self.assertEqual(
+            {"action": "status", "robot": "x1"},
+            line_openclaw.parse_robot_command("小羽 查詢 X1 狀態"),
+        )
+        self.assertEqual(
+            {"action": "list", "robot": "x1"},
+            line_openclaw.parse_robot_command("小羽 X1 動作列表"),
+        )
+        self.assertIsNone(line_openclaw.parse_robot_command("小羽 播放 away"))
+        self.assertIsNone(line_openclaw.parse_robot_command("小羽 謝謝"))
+        self.assertIsNone(line_openclaw.parse_robot_command("播放 thanks"))
+
+    @mock.patch("shared.line_openclaw._post")
+    def test_robot_command_uses_narrow_gateway_operation(self, post):
+        post.return_value = {"ok": True}
+
+        result = line_openclaw.robot_command(
+            "U-owner", "play", "away", robot="x1"
+        )
+
+        self.assertTrue(result["ok"])
+        post.assert_called_once_with(
+            "/v1/robot",
+            {"userId": "U-owner", "robot": "x1", "action": "play", "gesture": "away"},
+            timeout=15,
+        )
+
     @mock.patch("shared.line_openclaw.request.urlopen")
     @mock.patch("shared.line_openclaw.inference_hub._setting")
     def test_task_request_uses_narrow_gateway_path_and_callback(self, setting, urlopen):

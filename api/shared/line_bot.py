@@ -50,9 +50,25 @@ RED_STAMP_PATTERN = re.compile(
     re.IGNORECASE,
 )
 IMAGE_EDIT_INTENT_PATTERN = re.compile(
-    r"(?:轉成|改成|變成|畫成|做成|生成|產生|製作|風格化|重繪|修圖).{0,30}"
+    r"(?:轉成|轉換成|改成|變成|畫成|做成|生成|產生|製作|風格化|重繪|修圖).{0,30}"
     r"(?:漫畫|卡通|動畫|插畫|水彩|油畫|素描|風格|圖片|照片|圖)|"
-    r"(?:漫畫|卡通|動畫|插畫|水彩|油畫|素描).{0,30}(?:轉成|改成|變成|畫成|做成|生成|產生|製作|風格化|重繪)",
+    r"(?:漫畫|卡通|動畫|插畫|水彩|油畫|素描).{0,30}(?:轉成|轉換成|改成|變成|畫成|做成|生成|產生|製作|風格化|重繪)",
+    re.IGNORECASE,
+)
+IMAGE_EDIT_SOURCE_PATTERN = re.compile(
+    r"(?:根據|依照|使用|用).{0,16}(?:傳入|上傳|提供|接下來|下一張|這張|那張|照片|圖片|原圖)|"
+    r"(?:傳入|上傳|提供|接下來|下一張|這張|那張|剛傳|上一張|原圖|原始照片).{0,24}"
+    r"(?:照片|圖片|圖|轉成|改成|風格)",
+    re.IGNORECASE,
+)
+IMAGE_STYLE_REQUEST_PATTERN = re.compile(
+    r"(?:水彩|漫畫|卡通|動畫|插畫|油畫|素描|吉卜力|宮崎駿|風格化|畫風|風格)",
+    re.IGNORECASE,
+)
+RECENT_IMAGE_EDIT_REFERENCE_PATTERN = re.compile(
+    r"(?:基於|依據|依照|根據|使用|用).{0,16}(?:這|它|剛才|剛剛|前面|照片|圖片|圖)|"
+    r"(?:這(?:一)?張?|那(?:一)?張?|剛才|剛剛|前面|上一張|原圖|它).{0,12}(?:照片|圖片|圖|改|轉|變|畫|做|風格)|"
+    r"^\s*(?:請)?(?:把)?(?:它)?(?:改|轉|變|畫|做)",
     re.IGNORECASE,
 )
 IMAGE_GENERATION_INTENT_PATTERN = re.compile(
@@ -290,6 +306,20 @@ def help_message() -> str:
     )
 
 
+def welcome_message() -> str:
+    return (
+        "歡迎加入 RocketAI！我是小羽 🏸\n"
+        "我是一位多用途 AI 助手，可以協助：\n"
+        "• 一般問答、寫作、翻譯、摘要與規劃\n"
+        "• 查詢日期、時間、天氣與最新網路資訊\n"
+        "• 理解圖片；明確要求時進行 OCR\n"
+        "• 依文字產生圖片，或修改你提供的照片\n"
+        "• 摘要 10 MB 以下的文字型 PDF\n"
+        "• 查詢羽球場次、比分、戰績與積分\n\n"
+        "直接用自然的方式告訴我想做什麼即可；輸入「看板」可查看羽球資訊。"
+    )
+
+
 def needs_profile(text: str) -> bool:
     normalized = _normalize(text)
     return any(word in normalized for word in ("自己", "自已", "本人", "我的"))
@@ -452,19 +482,47 @@ def is_image_generation_request(text: str) -> bool:
 def image_request_intent(
     text: str, history: list[dict[str, str]] | None = None
 ) -> str:
-    """Use deterministic fast paths, then 4o-mini for unmatched image semantics."""
+    """Keep deterministic commands fast; let 4o-mini resolve recent-image ambiguity."""
     bounded = str(text or "").strip()
     if not bounded:
         return "chat"
-    if is_image_generation_request(bounded):
+    recent_history = history or []
+    has_recent_image = history_has_recent_image(recent_history)
+    is_edit = bool(
+        IMAGE_EDIT_INTENT_PATTERN.search(bounded)
+        and not OCR_INTENT_PATTERN.search(bounded)
+    )
+    is_generate = is_image_generation_request(bounded)
+    is_style_request = bool(IMAGE_STYLE_REQUEST_PATTERN.search(bounded))
+    # "下一張" is an explicit state-changing command and does not benefit from
+    # a semantic round trip.
+    if is_edit and NEXT_IMAGE_PATTERN.search(bounded):
+        return "image_edit"
+    # Once pixels exist, phrases such as "基於這照片產生水彩畫風" are ambiguous:
+    # 產生 can mean transform rather than create from scratch. Do not let the
+    # broad generation regex preempt the semantic classifier in this state.
+    if has_recent_image and (is_edit or is_generate or is_style_request):
+        semantic = inference_hub.classify_image_intent(bounded, recent_history)
+        intent = str(semantic.get("intent", "chat"))
+        if intent in {"image_generate", "image_edit", "image_question", "ocr"}:
+            return intent
+        # Fail safely when the classifier is unavailable: an explicit reference
+        # to cached pixels plus an edit/style request must never create an
+        # unrelated image from scratch.
+        if (is_edit or is_style_request) and RECENT_IMAGE_EDIT_REFERENCE_PATTERN.search(bounded):
+            return "image_edit"
+    # Without cached pixels, explicit supplied-photo language remains a reliable
+    # edit fast path; otherwise an unambiguous standalone generation stays fast.
+    if is_edit and IMAGE_EDIT_SOURCE_PATTERN.search(bounded):
+        return "image_edit"
+    if is_generate:
         return "image_generate"
     if (
-        IMAGE_EDIT_INTENT_PATTERN.search(bounded)
+        is_edit
         and (NEXT_IMAGE_PATTERN.search(bounded) or IMAGE_REQUEST_PATTERN.search(bounded))
-        and not OCR_INTENT_PATTERN.search(bounded)
     ):
         return "image_edit"
-    return str(inference_hub.classify_image_intent(bounded, history or []).get("intent", "chat"))
+    return str(inference_hub.classify_image_intent(bounded, recent_history).get("intent", "chat"))
 
 
 def history_has_recent_image(history: list[dict[str, str]]) -> bool:
@@ -472,6 +530,16 @@ def history_has_recent_image(history: list[dict[str, str]]) -> bool:
         str(item.get("role", "")) == "user"
         and str(item.get("content", "")).startswith("[使用者傳送一張圖片")
         for item in history[-12:]
+    )
+
+
+def should_edit_recent_image(text: str, history: list[dict[str, str]]) -> bool:
+    """Use the sender's cached image unless they explicitly refer to a future upload."""
+    bounded = str(text or "").strip()
+    return bool(
+        bounded
+        and history_has_recent_image(history)
+        and not NEXT_IMAGE_PATTERN.search(bounded)
     )
 
 
@@ -864,6 +932,37 @@ def reply_messages(reply_token: str, messages: list[dict[str, Any]], access_toke
     _send_messages(LINE_REPLY_URL, {"replyToken": reply_token, "messages": messages}, access_token)
 
 
+def robot_pose_quick_reply(
+    robot: str, poses: tuple[dict[str, Any], ...], *, text: str = ""
+) -> dict[str, Any]:
+    """Build a bounded LINE Quick Reply using opaque, server-validated pose IDs."""
+    if robot != "x1" or not 1 <= len(poses) <= 13:
+        raise ValueError("invalid robot pose list")
+    items = []
+    for pose in poses:
+        pose_id = str(pose.get("id", ""))
+        label = str(pose.get("label", pose_id))
+        if not re.fullmatch(r"[a-z0-9-]{1,32}", pose_id) or not 1 <= len(label) <= 20:
+            raise ValueError("invalid robot pose")
+        data = f"action=robot_pose&robot={robot}&pose={pose_id}"
+        if pose.get("previewOnly"):
+            data += "&preview=1"
+        items.append({
+            "type": "action",
+            "action": {
+                "type": "postback",
+                "label": label,
+                "data": data,
+                "displayText": f"X1 播放 {pose_id}",
+            },
+        })
+    return {
+        "type": "text",
+        "text": text or "請選擇 X1 動作。播放前請確認機器人周圍淨空。",
+        "quickReply": {"items": items},
+    }
+
+
 def _send_messages(
     url: str, value: dict[str, Any], access_token: str, *, retry_key: str = ""
 ) -> None:
@@ -925,7 +1024,9 @@ def push_news_digest(
     )
 
 
-def market_snapshot_flex(task_id: str, snapshot: dict[str, Any]) -> dict[str, Any]:
+def market_snapshot_flex(
+    task_id: str, snapshot: dict[str, Any], chart_url: str = ""
+) -> dict[str, Any]:
     """Build one compact, table-like Flex Bubble for a market snapshot."""
     contents: list[dict[str, Any]] = [
         {"type": "text", "text": snapshot["title"], "weight": "bold", "size": "lg", "wrap": True},
@@ -937,14 +1038,16 @@ def market_snapshot_flex(task_id: str, snapshot: dict[str, Any]) -> dict[str, An
             "wrap": True, "margin": "xs",
         })
     contents.append({"type": "separator", "margin": "md"})
-    for quote in snapshot["quotes"]:
+    dated_series = sum(bool(quote.get("date")) for quote in snapshot["quotes"]) > 1
+    for quote in snapshot["quotes"][:12]:
         percent = quote["changePercent"]
         arrow = "▲" if percent > 0 else "▼" if percent < 0 else "—"
         color = "#D32F2F" if percent > 0 else "#2E7D32" if percent < 0 else "#666666"
         currency_prefix = "$" if quote["currency"] == "USD" else f"{quote['currency']} "
         contents.append({
             "type": "box", "layout": "horizontal", "margin": "md", "contents": [
-                {"type": "text", "text": quote["symbol"], "size": "sm", "weight": "bold", "flex": 3},
+                {"type": "text", "text": quote.get("date", "")[5:] if dated_series else quote["symbol"],
+                 "size": "sm", "weight": "bold", "flex": 3},
                 {"type": "text", "text": f"{currency_prefix}{quote['price']:,.2f}",
                  "size": "sm", "align": "end", "flex": 4},
                 {"type": "text", "text": f"{arrow} {abs(percent):.2f}%", "size": "sm",
@@ -956,34 +1059,117 @@ def market_snapshot_flex(task_id: str, snapshot: dict[str, Any]) -> dict[str, An
         {"type": "text", "text": "價格可能延遲，請以來源市場為準", "size": "xxs",
          "color": "#999999", "wrap": True, "margin": "md"},
     ])
+    bubble: dict[str, Any] = {
+        "type": "bubble", "size": "mega",
+        "body": {"type": "box", "layout": "vertical", "contents": contents},
+        "footer": {
+            "type": "box", "layout": "horizontal", "spacing": "sm", "contents": [
+                {"type": "button", "style": "primary", "height": "sm", "color": "#2E7D32",
+                 "action": {"type": "postback", "label": "更新報價", "displayText": "更新這組股票報價",
+                            "data": f"action=market_refresh&task={task_id}"}},
+                {"type": "button", "style": "secondary", "height": "sm",
+                 "action": {"type": "postback", "label": "查看詳情", "displayText": "查看股價詳細資料",
+                            "data": f"action=market_details&task={task_id}"}},
+            ],
+        },
+    }
+    if chart_url.startswith("https://"):
+        bubble["hero"] = {
+            "type": "image", "url": chart_url, "size": "full",
+            "aspectRatio": "20:11", "aspectMode": "fit", "backgroundColor": "#FFFFFF",
+        }
     return {
         "type": "flex",
-        "altText": f"{snapshot['title']}：{len(snapshot['quotes'])} 檔報價"[:400],
-        "contents": {
-            "type": "bubble", "size": "mega",
-            "body": {"type": "box", "layout": "vertical", "contents": contents},
-            "footer": {
-                "type": "box", "layout": "horizontal", "spacing": "sm", "contents": [
-                    {"type": "button", "style": "primary", "height": "sm", "color": "#2E7D32",
-                     "action": {"type": "postback", "label": "更新報價", "displayText": "更新這組股票報價",
-                                "data": f"action=market_refresh&task={task_id}"}},
-                    {"type": "button", "style": "secondary", "height": "sm",
-                     "action": {"type": "postback", "label": "查看詳情", "displayText": "查看股價詳細資料",
-                                "data": f"action=market_details&task={task_id}"}},
-                ],
-            },
-        },
+        "altText": f"{snapshot['title']}：{len(snapshot['quotes'])} 筆報價"[:400],
+        "contents": bubble,
     }
 
 
 def push_market_snapshot(
-    target_id: str, task_id: str, snapshot: dict[str, Any], access_token: str
+    target_id: str, task_id: str, snapshot: dict[str, Any], access_token: str,
+    chart_url: str = "",
 ) -> None:
     if not target_id:
         raise ValueError("missing LINE push target")
     _send_messages(
         LINE_PUSH_URL,
-        {"to": target_id, "messages": [market_snapshot_flex(task_id, snapshot)]},
+        {"to": target_id, "messages": [market_snapshot_flex(task_id, snapshot, chart_url)]},
+        access_token,
+        retry_key=task_id,
+    )
+
+
+def artifact_flex(filename: str, download_url: str, size: int, summary: str = "") -> dict[str, Any]:
+    """Build a compact file card backed by a short-lived HTTPS download URL."""
+    if not filename or not download_url.startswith("https://"):
+        raise ValueError("invalid artifact card")
+    size_text = f"{size / 1024:.1f} KB" if size >= 1024 else f"{size} bytes"
+    contents: list[dict[str, Any]] = [
+        {"type": "text", "text": "📄 OpenClaw 檔案已完成", "weight": "bold",
+         "size": "lg", "wrap": True},
+        {"type": "text", "text": filename[:120], "size": "sm", "weight": "bold",
+         "color": "#333333", "wrap": True, "margin": "md"},
+        {"type": "text", "text": f"大小：{size_text} · 下載連結 24 小時有效",
+         "size": "xs", "color": "#777777", "wrap": True, "margin": "xs"},
+    ]
+    bounded_summary = " ".join(str(summary or "").split())[:300]
+    if bounded_summary:
+        contents.append({
+            "type": "text", "text": bounded_summary, "size": "sm", "color": "#555555",
+            "wrap": True, "margin": "lg", "maxLines": 5,
+        })
+    return {
+        "type": "flex",
+        "altText": f"OpenClaw 檔案：{filename}"[:400],
+        "contents": {
+            "type": "bubble", "size": "kilo",
+            "body": {"type": "box", "layout": "vertical", "contents": contents},
+            "footer": {
+                "type": "box", "layout": "vertical", "contents": [{
+                    "type": "button", "style": "primary", "color": "#2E7D32",
+                    "action": {"type": "uri", "label": "下載檔案", "uri": download_url},
+                }],
+            },
+        },
+    }
+
+
+def push_artifact(
+    target_id: str, task_id: str, filename: str, download_url: str, size: int,
+    summary: str, access_token: str,
+) -> None:
+    if not target_id:
+        raise ValueError("missing LINE push target")
+    _send_messages(
+        LINE_PUSH_URL,
+        {"to": target_id, "messages": [artifact_flex(filename, download_url, size, summary)]},
+        access_token,
+        retry_key=task_id,
+    )
+
+
+def push_images(
+    target_id: str, task_id: str, images: list[tuple[str, str]], summary: str,
+    access_token: str,
+) -> None:
+    """Push one summary plus up to four normalized LINE image messages."""
+    if not target_id or not 1 <= len(images) <= 4:
+        raise ValueError("invalid LINE image push")
+    messages: list[dict[str, Any]] = [{
+        "type": "text",
+        "text": (str(summary or "").strip() or f"找到 {len(images)} 張圖片。")[:5000],
+    }]
+    for original_url, preview_url in images:
+        if not original_url.startswith("https://") or not preview_url.startswith("https://"):
+            raise ValueError("LINE image URLs must use HTTPS")
+        messages.append({
+            "type": "image",
+            "originalContentUrl": original_url,
+            "previewImageUrl": preview_url,
+        })
+    _send_messages(
+        LINE_PUSH_URL,
+        {"to": target_id, "messages": messages},
         access_token,
         retry_key=task_id,
     )

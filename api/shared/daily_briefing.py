@@ -123,7 +123,9 @@ def build_today(date_key: str | None = None) -> str:
 
 
 def for_first_message(user_id: str, now: datetime | None = None) -> str:
-    """Return the briefing only for this user's first private text message today."""
+    """Return the private briefing only for the owner's first text message today."""
+    if not inference_hub.is_line_owner(user_id):
+        return ""
     date_key = taipei_date_key(now)
     if not store.claim_line_daily_briefing(user_id, date_key):
         return ""

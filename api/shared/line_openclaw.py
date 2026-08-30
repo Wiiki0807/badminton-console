@@ -16,6 +16,49 @@ COMMAND_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 PAIR_RE = re.compile(r"^(?:openclaw|小羽)\s*配對\s+([A-Za-z0-9_-]{6,80})$", re.IGNORECASE)
+X1_POSES = (
+    {"id": "away", "label": "away"},
+    {"id": "away2", "label": "away2"},
+    {"id": "good", "label": "good"},
+    {"id": "happy", "label": "happy"},
+    {"id": "hello", "label": "hello"},
+    {"id": "come", "label": "come"},
+    # The owner has physically verified bad and thanks despite conservative model contact flags.
+    {"id": "bad", "label": "bad"},
+    {"id": "thanks", "label": "thanks"},
+    {"id": "goodbye", "label": "goodbye"},
+    {"id": "nice", "label": "nice"},
+    {"id": "surprised", "label": "surprised"},
+    {"id": "wave-happily", "label": "wave happily"},
+    {"id": "open-two-arms", "label": "open two arms"},
+)
+X1_POSE_BY_ID = {str(item["id"]): item for item in X1_POSES}
+X1_EXTRA_POSES: set[str] = set()
+X1_POSE_PATTERN = "|".join(
+    re.escape(value) for value in sorted((*X1_POSE_BY_ID, *X1_EXTRA_POSES), key=len, reverse=True)
+)
+ROBOT_PLAY_RE = re.compile(
+    rf"^(?:小羽|rocketai)\s*(?:請\s*)?(?:"
+    rf"x1\s*(?:播放(?:動作|手勢)?|做(?:動作|手勢)?|手勢)\s*[：:]?\s*({X1_POSE_PATTERN})|"
+    rf"(?:播放(?:動作|手勢)?|做(?:動作|手勢)?|手勢)\s*x1\s*[：:]?\s*({X1_POSE_PATTERN})"
+    rf")\s*$",
+    re.IGNORECASE,
+)
+ROBOT_STOP_RE = re.compile(
+    r"^(?:小羽|rocketai)\s*(?:請\s*)?(?:x1\s*(?:停止|停下|取消)(?:動作|手勢)?|"
+    r"(?:停止|停下|取消)\s*x1(?:的)?(?:動作|手勢)?)\s*$",
+    re.IGNORECASE,
+)
+ROBOT_STATUS_RE = re.compile(
+    r"^(?:小羽|rocketai)\s*(?:請\s*)?(?:x1\s*(?:查詢|查看|回報)?\s*(?:的)?\s*(?:狀態|狀況)|"
+    r"(?:查詢|查看|回報)\s*x1\s*(?:的)?\s*(?:狀態|狀況))\s*$",
+    re.IGNORECASE,
+)
+ROBOT_LIST_RE = re.compile(
+    r"^(?:小羽|rocketai)\s*(?:請\s*)?(?:x1\s*(?:動作|手勢|pose)\s*(?:列表|清單)|"
+    r"(?:列出|查看|顯示)\s*x1\s*(?:動作|手勢|pose)|(?:動作|手勢|pose)\s*x1\s*(?:列表|清單))\s*$",
+    re.IGNORECASE,
+)
 
 
 def configured() -> bool:
@@ -34,6 +77,25 @@ def parse_command(text: str) -> dict[str, str] | None:
     matched = COMMAND_RE.fullmatch(bounded)
     if matched and matched.group(1).strip():
         return {"action": "task", "text": matched.group(1).strip()[:8000]}
+    return None
+
+
+def parse_robot_command(text: str) -> dict[str, str] | None:
+    """Parse only explicit, bounded X1 commands; normal conversation must not move it."""
+    bounded = str(text or "").strip()[:160]
+    matched = ROBOT_PLAY_RE.fullmatch(bounded)
+    if matched:
+        gesture = str(matched.group(1) or matched.group(2)).lower()
+        result = {"action": "play", "robot": "x1", "gesture": gesture}
+        if bool((X1_POSE_BY_ID.get(gesture) or {}).get("previewOnly")):
+            result["preview"] = "true"
+        return result
+    if ROBOT_STOP_RE.fullmatch(bounded):
+        return {"action": "stop", "robot": "x1"}
+    if ROBOT_STATUS_RE.fullmatch(bounded):
+        return {"action": "status", "robot": "x1"}
+    if ROBOT_LIST_RE.fullmatch(bounded):
+        return {"action": "list", "robot": "x1"}
     return None
 
 
@@ -72,6 +134,17 @@ def submit_task(user_id: str, text: str, task_id: str = "") -> str:
         "callbackUrl": inference_hub._setting("LINE_OPENCLAW_CALLBACK_URL"),
     })
     return str(result.get("taskId") or task_id)
+
+
+def robot_command(
+    user_id: str, action: str, gesture: str = "", *, robot: str, preview: bool = False
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"userId": user_id, "robot": robot, "action": action}
+    if gesture:
+        payload["gesture"] = gesture
+    if preview:
+        payload["preview"] = True
+    return _post("/v1/robot", payload, timeout=15)
 
 
 def sync_reminder(action: str, rows: list[dict[str, Any]]) -> None:

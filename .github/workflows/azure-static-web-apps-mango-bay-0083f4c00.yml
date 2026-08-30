@@ -35,6 +35,7 @@ jobs:
           LINE_OPENCLAW_CALLBACK_URL: ${{ github.ref == 'refs/heads/main' && vars.LINE_OPENCLAW_CALLBACK_URL || '' }}
           LINE_OPENCLAW_REMINDER_CALLBACK_URL: ${{ github.ref == 'refs/heads/main' && vars.LINE_OPENCLAW_REMINDER_CALLBACK_URL || '' }}
           LINE_OPENCLAW_CALLBACK_TOKEN: ${{ github.ref == 'refs/heads/main' && secrets.LINE_OPENCLAW_CALLBACK_TOKEN || '' }}
+          LINE_OWNER_USER_ID: ${{ github.ref == 'refs/heads/main' && secrets.LINE_OWNER_USER_ID || '' }}
         run: |
           set -euo pipefail
           python api/inject_deployment_settings.py

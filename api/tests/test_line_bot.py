@@ -16,6 +16,7 @@ from PIL import Image
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from shared import line_bot
+from shared import line_openclaw
 from shared import inference_hub
 from shared import store
 from shared import pdf_summary
@@ -42,6 +43,15 @@ STATE = {
 
 
 class LineBotAnswerTests(unittest.TestCase):
+    def test_x1_pose_quick_reply_has_thirteen_scoped_postbacks(self):
+        message = line_bot.robot_pose_quick_reply("x1", line_openclaw.X1_POSES)
+
+        items = message["quickReply"]["items"]
+        self.assertEqual(13, len(items))
+        self.assertIn("robot=x1", items[0]["action"]["data"])
+        self.assertIn("pose=away", items[0]["action"]["data"])
+        self.assertTrue(all(item["action"]["type"] == "postback" for item in items))
+
     @mock.patch("shared.store._table")
     def test_daily_briefing_claim_is_once_per_user_and_date(self, table_factory):
         table = mock.MagicMock()
@@ -57,12 +67,25 @@ class LineBotAnswerTests(unittest.TestCase):
         self.assertNotIn("U123", entity["PartitionKey"])
         self.assertEqual("2026-08-29", entity["RowKey"])
 
+    @mock.patch("shared.store._table")
+    def test_new_user_welcome_is_claimed_only_once(self, table_factory):
+        table = mock.MagicMock()
+        table.create_entity.side_effect = [None, store.ResourceExistsError("exists")]
+        table_factory.return_value.__enter__.return_value = table
+
+        self.assertTrue(store.claim_line_welcome("U-new"))
+        self.assertFalse(store.claim_line_welcome("U-new"))
+        entity = table.create_entity.call_args_list[0].args[0]
+        self.assertNotIn("U-new", entity["PartitionKey"])
+        self.assertEqual("welcome-v1", entity["RowKey"])
+
     @mock.patch("shared.daily_briefing.store.save_line_daily_briefing")
     @mock.patch("shared.daily_briefing.build_today")
     @mock.patch("shared.daily_briefing.store.load_line_daily_briefing", return_value="cached")
     @mock.patch("shared.daily_briefing.store.claim_line_daily_briefing", return_value=True)
+    @mock.patch("shared.daily_briefing.inference_hub.is_line_owner", return_value=True)
     def test_daily_briefing_reuses_shared_daily_cache(
-        self, claim, load, build, save
+        self, _owner, claim, load, build, save
     ):
         result = daily_briefing.for_first_message(
             "U123", datetime(2026, 8, 29, 8, 0, tzinfo=timezone(timedelta(hours=8)))
@@ -73,6 +96,43 @@ class LineBotAnswerTests(unittest.TestCase):
         load.assert_called_once_with("2026-08-29")
         build.assert_not_called()
         save.assert_not_called()
+
+    @mock.patch("shared.daily_briefing.store.claim_line_daily_briefing")
+    @mock.patch("shared.daily_briefing.inference_hub.is_line_owner", return_value=False)
+    def test_daily_briefing_is_never_created_for_non_owner(self, _owner, claim):
+        self.assertEqual("", daily_briefing.for_first_message("U-other"))
+        claim.assert_not_called()
+
+    @mock.patch("function_app.store.claim_line_welcome", return_value=True)
+    @mock.patch("function_app.inference_hub.is_line_owner", return_value=False)
+    def test_non_owner_first_message_gets_welcome_not_private_briefing(
+        self, _owner, claim_welcome
+    ):
+        result = function_app._welcome_for_message(
+            {"type": "user", "userId": "U-new"}, "text"
+        )
+
+        self.assertIn("歡迎加入 RocketAI", result)
+        self.assertIn("多用途 AI 助手", result)
+        self.assertNotIn("NVIDIA／AI／機器人焦點", result)
+        claim_welcome.assert_called_once_with("U-new")
+
+    @mock.patch("function_app.store.claim_line_welcome")
+    @mock.patch("function_app.inference_hub.is_line_owner", return_value=True)
+    def test_owner_message_never_triggers_inline_daily_briefing(self, _owner, claim_welcome):
+        result = function_app._welcome_for_message(
+            {"type": "user", "userId": "U-owner"}, "text"
+        )
+
+        self.assertEqual("", result)
+        claim_welcome.assert_not_called()
+
+    @mock.patch.dict("os.environ", {"LINE_OWNER_USER_ID": "U-owner"}, clear=True)
+    def test_owner_id_match_fails_closed(self):
+        inference_hub._deployment_settings.cache_clear()
+        self.assertTrue(inference_hub.is_line_owner("U-owner"))
+        self.assertFalse(inference_hub.is_line_owner("U-other"))
+        self.assertFalse(inference_hub.is_line_owner(""))
 
     @mock.patch("shared.inference_hub._json_request")
     def test_daily_weather_forecast_requests_banqiao_daily_fields(self, json_request):
@@ -169,17 +229,44 @@ class LineBotAnswerTests(unittest.TestCase):
         self.assertIn("https://example.com/nvidia", result)
 
     @mock.patch("shared.line_bot.request.urlopen")
-    def test_line_reply_can_send_normal_answer_and_daily_briefing(self, urlopen):
+    def test_line_reply_can_send_normal_answer_and_welcome(self, urlopen):
         response = mock.MagicMock()
         response.__enter__.return_value.read.return_value = b"{}"
         urlopen.return_value = response
 
-        line_bot.reply_texts("reply-token", ["原本回答", "每日情報"], "access-token")
+        line_bot.reply_texts("reply-token", ["原本回答", "新朋友歡迎訊息"], "access-token")
 
         sent = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
         self.assertEqual(2, len(sent["messages"]))
         self.assertEqual("原本回答", sent["messages"][0]["text"])
-        self.assertEqual("每日情報", sent["messages"][1]["text"])
+        self.assertEqual("新朋友歡迎訊息", sent["messages"][1]["text"])
+
+    @mock.patch("function_app.line_openclaw.submit_task")
+    @mock.patch("function_app.store.create_line_openclaw_task")
+    @mock.patch("function_app.store.get_line_openclaw_task", return_value=None)
+    @mock.patch("function_app.line_openclaw.configured", return_value=True)
+    @mock.patch("function_app.inference_hub._setting", return_value="U-owner")
+    @mock.patch("function_app.inference_hub.openclaw_callback_token_matches", return_value=True)
+    def test_daily_dispatch_creates_owner_only_openclaw_task(
+        self, _token, _setting, _configured, _existing, create_task, submit_task
+    ):
+        req = function_app.func.HttpRequest(
+            method="POST",
+            url="https://example.test/api/line-openclaw-daily-dispatch",
+            headers={"x-line-openclaw-token": "valid"},
+            body=json.dumps({
+                "kind": "daily-briefing", "scheduledDate": "2026-08-30"
+            }).encode("utf-8"),
+        )
+
+        response = function_app.line_openclaw_daily_dispatch(req)
+
+        self.assertEqual(202, response.status_code)
+        task_id, owner_id, prompt = create_task.call_args.args
+        self.assertEqual("U-owner", owner_id)
+        self.assertIn("Open-Meteo", prompt)
+        self.assertIn("verified-news-digest", prompt)
+        submit_task.assert_called_once_with("U-owner", prompt, task_id=task_id)
 
     @mock.patch.dict("os.environ", {"INFERENCE_HUB_TOKEN": "hub-secret"}, clear=True)
     def test_reminder_dispatch_token_is_domain_separated_from_hub_token(self):
@@ -571,6 +658,94 @@ class LineBotAnswerTests(unittest.TestCase):
         )
         classify.assert_called_once()
 
+    @mock.patch("shared.line_bot.inference_hub.classify_image_intent")
+    def test_supplied_photo_edit_takes_precedence_over_generation_words(self, classify):
+        self.assertEqual(
+            "image_edit",
+            line_bot.image_request_intent("根據傳入照片產生漫畫風格", []),
+        )
+        self.assertEqual(
+            "image_edit",
+            line_bot.image_request_intent("用我下一張照片做成水彩插畫", []),
+        )
+        self.assertEqual(
+            "image_generate",
+            line_bot.image_request_intent("產生一個漫畫女生的圖片", []),
+        )
+        classify.assert_not_called()
+
+    @mock.patch("shared.line_bot.inference_hub.classify_image_intent")
+    def test_recent_photo_style_request_edits_cached_image(self, classify):
+        classify.return_value = {
+            "intent": "image_edit", "confidence": 0.98,
+            "reason": "要求轉換最近圖片風格",
+        }
+        history = [{
+            "role": "user",
+            "content": "[使用者傳送一張圖片，要求一般圖片理解]",
+        }]
+        text = "可否依據剛才這照片轉換成水彩吉卜力風格"
+
+        self.assertEqual("image_edit", line_bot.image_request_intent(text, history))
+        self.assertTrue(line_bot.should_edit_recent_image(text, history))
+        self.assertFalse(line_bot.should_edit_recent_image(
+            "請把我下一張照片轉換成水彩風格", history
+        ))
+        classify.assert_called_once_with(text, history)
+
+    @mock.patch("shared.line_bot.inference_hub.classify_image_intent")
+    def test_recent_image_semantics_do_not_depend_on_measure_word(self, classify):
+        classify.return_value = {
+            "intent": "image_edit", "confidence": 0.99,
+            "reason": "兩句都指涉最近圖片",
+        }
+        history = [{
+            "role": "user",
+            "content": "[使用者傳送一張圖片，要求一般圖片理解]",
+        }]
+
+        without_measure = line_bot.image_request_intent(
+            "基於這照片產生水彩畫風格", history
+        )
+        with_measure = line_bot.image_request_intent(
+            "基於這張照片產生水彩畫風格", history
+        )
+
+        self.assertEqual("image_edit", without_measure)
+        self.assertEqual("image_edit", with_measure)
+        self.assertEqual(2, classify.call_count)
+
+    @mock.patch("shared.line_bot.inference_hub.classify_image_intent")
+    def test_recent_image_edit_fails_safe_when_classifier_is_unavailable(self, classify):
+        classify.return_value = {
+            "intent": "chat", "confidence": 0.0, "reason": "classifier unavailable",
+        }
+        history = [{
+            "role": "user",
+            "content": "[使用者傳送一張圖片，要求一般圖片理解]",
+        }]
+
+        self.assertEqual(
+            "image_edit",
+            line_bot.image_request_intent("基於這照片產生水彩畫風格", history),
+        )
+
+    @mock.patch("shared.line_bot.inference_hub.classify_image_intent")
+    def test_recent_image_does_not_force_an_unrelated_new_scene_to_edit(self, classify):
+        classify.return_value = {
+            "intent": "image_generate", "confidence": 0.97,
+            "reason": "明確要求創作無關的新場景",
+        }
+        history = [{
+            "role": "user",
+            "content": "[使用者傳送一張圖片，要求一般圖片理解]",
+        }]
+
+        self.assertEqual(
+            "image_generate",
+            line_bot.image_request_intent("另外產生一張海底城市圖片", history),
+        )
+
     def test_semantic_image_edit_marker_is_consumed_by_next_image(self):
         history = [{
             "role": "user",
@@ -599,13 +774,15 @@ class LineBotAnswerTests(unittest.TestCase):
         urlopen.return_value = response
 
         result = inference_hub.classify_image_intent(
-            "讓我看看機器手臂工作的樣子", []
+            "另外產生一張與前圖無關的機器手臂工作圖片",
+            [{"role": "user", "content": "[使用者傳送一張圖片，要求一般圖片理解]"}],
         )
 
         self.assertEqual("image_generate", result["intent"])
         sent = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
         self.assertEqual("openai/openai/gpt-4o-mini", sent["model"])
         self.assertEqual([], sent["tool_names"])
+        self.assertIn("最近圖片：有", sent["messages"][0]["content"])
 
     @mock.patch("function_app.line_bot.push_text")
     def test_long_image_notice_is_one_push_with_stable_retry_key(self, push):
@@ -1088,6 +1265,57 @@ class LineBotAnswerTests(unittest.TestCase):
         reply.assert_not_called()
         read_state.assert_not_called()
         add_memory.assert_not_called()
+
+    @mock.patch.dict(
+        "os.environ",
+        {"LINE_CHANNEL_SECRET": "secret", "LINE_CHANNEL_ACCESS_TOKEN": "token"},
+        clear=True,
+    )
+    def test_webhook_edits_recent_image_instead_of_generating_from_scratch(self):
+        text = "可否依據剛才這照片轉換成水彩吉卜力風格"
+        history = [{
+            "role": "user",
+            "content": "[使用者傳送一張圖片，要求一般圖片理解]",
+        }]
+        body = json.dumps({"events": [{
+            "type": "message",
+            "webhookEventId": "event-recent-edit",
+            "replyToken": "reply-token",
+            "source": {"type": "user", "userId": "U1"},
+            "message": {"id": "M2", "type": "text", "text": text},
+        }]}).encode("utf-8")
+        req = function_app.func.HttpRequest(
+            method="POST",
+            url="https://example.test/api/line-webhook",
+            headers={"x-line-signature": "valid"},
+            body=body,
+        )
+        with (
+            mock.patch("function_app.line_bot.verify_signature", return_value=True),
+            mock.patch("function_app.store.claim_line_webhook_event", return_value=True),
+            mock.patch("function_app.store.list_line_memory", return_value=history),
+            mock.patch("function_app._welcome_for_message", return_value=""),
+            mock.patch("function_app.line_bot.show_loading_animation"),
+            mock.patch("function_app.inference_hub.looks_like_reminder_request", return_value=False),
+            mock.patch("function_app.store.load_line_recent_image", return_value="data:image/jpeg;base64,YQ==") as load,
+            mock.patch("function_app._push_image_processing_notice") as notice,
+            mock.patch("function_app.inference_hub.edit_image", return_value=(b"png", "image/png")) as edit,
+            mock.patch(
+                "function_app.store.upload_line_generated_image",
+                return_value=("https://blob.test/original.png", "https://blob.test/preview.jpg"),
+            ),
+            mock.patch("function_app.line_bot.reply_image") as reply_image,
+            mock.patch("function_app.store.add_line_memory"),
+            mock.patch("function_app.inference_hub.generate_image") as generate,
+        ):
+            response = function_app.line_webhook(req)
+
+        self.assertEqual(200, response.status_code)
+        load.assert_called_once_with("user:U1")
+        notice.assert_called_once()
+        edit.assert_called_once_with("data:image/jpeg;base64,YQ==", text)
+        generate.assert_not_called()
+        reply_image.assert_called_once()
 
     @mock.patch("shared.inference_hub.request.urlopen")
     @mock.patch.dict(

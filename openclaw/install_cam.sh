@@ -79,6 +79,8 @@ fi
 install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/line_openclaw_bridge.py" "${state_dir}/line_openclaw_bridge.py"
 install -o "${user_name}" -g "${user_name}" -m 700 \
+  "${source_dir}/x1_gesture_control.py" "${state_dir}/x1_gesture_control.py"
+install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/robot_control.py" "${state_dir}/robot_control.py"
 install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/azure_callback.py" "${state_dir}/azure_callback.py"
@@ -97,6 +99,14 @@ if [[ -f "${news_skill_source}" ]]; then
   install -o "${user_name}" -g "${user_name}" -m 600 \
     "${news_skill_source}" \
     "${state_dir}/workspace/skills/verified-news-digest/SKILL.md"
+fi
+x1_skill_source="${source_dir}/workspace/skills/x1-gesture-control/SKILL.md"
+if [[ -f "${x1_skill_source}" ]]; then
+  install -o "${user_name}" -g "${user_name}" -m 700 -d \
+    "${state_dir}/workspace/skills/x1-gesture-control"
+  install -o "${user_name}" -g "${user_name}" -m 600 \
+    "${x1_skill_source}" \
+    "${state_dir}/workspace/skills/x1-gesture-control/SKILL.md"
 fi
 install -o "${user_name}" -g "${user_name}" -m 644 \
   "${source_dir}/line-openclaw-bridge.service" \

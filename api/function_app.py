@@ -1,14 +1,17 @@
 """HTTP API for the badminton console, replacing the endpoints previously served by server.py."""
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import hmac
 import json
 import logging
 import os
 import uuid
-from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from datetime import datetime
 from urllib.parse import parse_qs
+from zoneinfo import ZoneInfo
 
 import azure.functions as func
 
@@ -17,43 +20,50 @@ from shared import line_bot
 from shared import inference_hub
 from shared import pdf_summary
 from shared import reminders
-from shared import daily_briefing
 from shared import line_openclaw
 from shared import news_digest
 from shared import market_snapshot
+from shared import remote_image
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 MAX_BODY_BYTES = 1_000_000
 # Browsers assume UTF-8 for JSON, but other clients fall back to ISO-8859-1 without this.
 JSON_CONTENT_TYPE = "application/json; charset=utf-8"
-DAILY_BRIEFING_EXECUTOR = ThreadPoolExecutor(max_workers=2)
+TAIPEI = ZoneInfo("Asia/Taipei")
+DAILY_OPENCLAW_PROMPT = (
+    "請製作今天的 RocketAI 每日情報並推送給主人。第一則必須是新北市板橋區今日天氣預報，"
+    "請用 web_fetch 讀取 Open-Meteo 今日預報 JSON："
+    "https://api.open-meteo.com/v1/forecast?latitude=25.0143&longitude=121.4672&"
+    "daily=weather_code,temperature_2m_max,temperature_2m_min,"
+    "precipitation_probability_max,precipitation_sum&timezone=Asia%2FTaipei&forecast_days=1；"
+    "摘要需包含天氣、最高／最低溫、最高降雨機率與預估雨量。"
+    "其餘最多四則整理過去 24 小時 NVIDIA、AI 新技術與機器人相關新聞。"
+    "新聞必須使用 verified-news-digest 流程：Tavily 搜尋候選、web_fetch 打開重要原始來源、"
+    "交叉整理並附實際來源連結；標示官方確認、多方報導、單一來源或未獲證實。"
+    "輸出適合 LINE Flex Carousel 的 verified_news_digest JSON。"
+)
 
 
-def _start_daily_briefing(source: dict, message_type: str) -> Future | None:
-    """Start the private user's daily briefing while their normal answer is generated."""
+def _welcome_for_message(source: dict, message_type: str) -> str:
+    """Return only a non-owner's one-time welcome; chat never triggers a briefing."""
     user_id = str(source.get("userId", "")).strip()
     if message_type != "text" or not user_id or line_bot.is_group_source(source):
-        return None
-    return DAILY_BRIEFING_EXECUTOR.submit(daily_briefing.for_first_message, user_id)
+        return ""
+    if inference_hub.is_line_owner(user_id):
+        return ""
+    return line_bot.welcome_message() if store.claim_line_welcome(user_id) else ""
 
 
-def _reply_with_daily_briefing(
+def _reply_with_welcome(
     reply_token: str,
     text: str,
     access_token: str,
-    briefing_future: Future | None,
+    welcome: str,
 ) -> None:
     messages = [text]
-    if briefing_future is not None:
-        try:
-            briefing = str(briefing_future.result(timeout=35) or "").strip()
-            if briefing:
-                messages.append(briefing)
-        except FutureTimeoutError:
-            logging.warning("Daily briefing exceeded LINE reply wait budget")
-        except Exception:
-            logging.exception("Daily briefing failed; sending normal reply only")
+    if welcome.strip():
+        messages.append(welcome.strip())
     line_bot.reply_texts(reply_token, messages, access_token)
 
 
@@ -93,6 +103,35 @@ def read_body(req: func.HttpRequest) -> dict:
     if not isinstance(body, dict):
         raise ValueError("body must be an object")
     return body
+
+
+def _openclaw_artifact(value: object) -> dict | None:
+    """Validate and decode a bounded artifact received from the private cam bridge."""
+    if not isinstance(value, dict):
+        return None
+    filename = str(value.get("name", ""))
+    content_type = str(value.get("contentType", "application/octet-stream"))[:100]
+    encoded = str(value.get("base64", ""))
+    if not filename or len(filename) > 120 or len(encoded) > 700_000:
+        return None
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error):
+        return None
+    if not raw or len(raw) > 512 * 1024 or value.get("size") != len(raw):
+        return None
+    return {"name": filename, "contentType": content_type, "size": len(raw), "raw": raw}
+
+
+def _openclaw_image_urls(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value[:4]:
+        candidate = str(item or "").strip()
+        if candidate.startswith("https://") and len(candidate) <= 2000 and candidate not in result:
+            result.append(candidate)
+    return result
 
 
 @app.route(route="health", methods=["GET"])
@@ -168,8 +207,34 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                 source = event.get("source") or {}
                 values = parse_qs(str((event.get("postback") or {}).get("data", "")))
                 action = values.get("action", [""])[0]
-                task_id = str(uuid.UUID(values.get("task", [""])[0]))
                 user_id = str(source.get("userId", ""))
+                if action == "robot_pose":
+                    robot = values.get("robot", [""])[0].lower()
+                    gesture = values.get("pose", [""])[0].lower()
+                    pose = line_openclaw.X1_POSE_BY_ID.get(gesture)
+                    if not inference_hub.is_line_owner(user_id):
+                        text = "這個 X1 動作控制只允許已設定的主人使用。"
+                    elif robot != "x1" or not pose:
+                        text = "這個機器人或動作不在允許清單中。"
+                    else:
+                        preview = values.get("preview", [""])[0] == "1"
+                        result = line_openclaw.robot_command(
+                            user_id, "play", gesture, robot=robot, preview=preview
+                        )
+                        mode = "Isaac 預覽" if preview else "實機"
+                        text = (
+                            f"▶️ X1 已接受動作：{gesture}（{mode}）。"
+                            if result.get("ok") else f"X1 無法播放動作：{gesture}。"
+                        )
+                    line_bot.reply_messages(
+                        reply_token,
+                        [line_bot.robot_pose_quick_reply(
+                            "x1", line_openclaw.X1_POSES, text=text
+                        )],
+                        access_token,
+                    )
+                    continue
+                task_id = str(uuid.UUID(values.get("task", [""])[0]))
                 if action == "news_detail":
                     item_index = int(values.get("item", ["-1"])[0])
                     item = store.get_line_openclaw_news_item(task_id, user_id, item_index)
@@ -234,12 +299,71 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                     continue
                 if message_type == "text" and line_bot.is_explicit_bot_wake(message):
                     incoming_text = line_bot.strip_bot_wake_text(message)
-            briefing_future = _start_daily_briefing(source, message_type)
+            welcome = _welcome_for_message(source, message_type)
             if message_type == "text" and line_bot.is_memory_reset(incoming_text):
                 store.clear_line_memory(conversation_id)
-                _reply_with_daily_briefing(
-                    reply_token, "已清除這個對話最近的記憶。", access_token, briefing_future
+                _reply_with_welcome(
+                    reply_token, "已清除這個對話最近的記憶。", access_token, welcome
                 )
+                continue
+            robot_command = (
+                line_openclaw.parse_robot_command(incoming_text)
+                if message_type == "text" and not line_bot.is_group_source(source)
+                else None
+            )
+            if robot_command:
+                user_id = str(source.get("userId", ""))
+                if not inference_hub.is_line_owner(user_id):
+                    text = "這個 X1 動作控制只允許已設定的主人使用。"
+                elif robot_command["action"] == "list":
+                    line_bot.reply_messages(
+                        reply_token,
+                        [line_bot.robot_pose_quick_reply("x1", line_openclaw.X1_POSES)],
+                        access_token,
+                    )
+                    continue
+                else:
+                    try:
+                        result = line_openclaw.robot_command(
+                            user_id,
+                            robot_command["action"],
+                            robot_command.get("gesture", ""),
+                            robot=robot_command["robot"],
+                            preview=robot_command.get("preview") == "true",
+                        )
+                        action = robot_command["action"]
+                        if action == "status":
+                            online = bool(
+                                result.get("ok")
+                                and result.get("joint_states")
+                                and int(result.get("left_subs", 0)) > 0
+                                and int(result.get("right_subs", 0)) > 0
+                            )
+                            text = (
+                                f"🤖 X1 {'在線' if online else '尚未就緒'}\n"
+                                f"動作：{'播放中' if result.get('playing') else '待命'}\n"
+                                f"Isaac 鏡像：{'已連線' if result.get('isaac_mirror') else '未連線'}"
+                            )
+                        elif action == "stop":
+                            text = "⏹️ X1 動作已停止。" if result.get("ok") else "X1 動作停止失敗。"
+                        else:
+                            gesture = robot_command.get("gesture", "")
+                            mode = (
+                                "Isaac 預覽"
+                                if robot_command.get("preview") == "true"
+                                else "實機"
+                            )
+                            text = (
+                                f"▶️ X1 已接受動作：{gesture}（{mode}）。"
+                                if result.get("ok")
+                                else f"X1 無法播放動作：{gesture}。"
+                            )
+                    except PermissionError:
+                        text = "這個 X1 動作控制只允許已配對的主人使用。"
+                    except Exception:
+                        logging.exception("LINE X1 robot command failed")
+                        text = "X1 動作控制目前無法連線，請稍後再試。"
+                _reply_with_welcome(reply_token, text, access_token, welcome)
                 continue
             openclaw_command = (
                 line_openclaw.parse_command(incoming_text)
@@ -269,7 +393,7 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                 except Exception:
                     logging.exception("LINE OpenClaw command failed")
                     text = "OpenClaw 目前無法接受任務，請稍後再試。"
-                _reply_with_daily_briefing(reply_token, text, access_token, briefing_future)
+                _reply_with_welcome(reply_token, text, access_token, welcome)
                 continue
             try:
                 line_bot.show_loading_animation(source, access_token, loading_seconds=25)
@@ -285,8 +409,8 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                 except (ValueError, RuntimeError) as exc:
                     logging.warning("LINE reminder command rejected: %s", exc)
                     text = "提醒內容、時間或 OpenClaw 排程服務暫時無效，請稍後再試。"
-                _reply_with_daily_briefing(
-                    reply_token, text, access_token, briefing_future
+                _reply_with_welcome(
+                    reply_token, text, access_token, welcome
                 )
                 try:
                     store.add_line_memory(conversation_id, "user", incoming_text)
@@ -329,9 +453,52 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                     )
                 continue
             if image_intent == "image_edit":
+                if line_bot.should_edit_recent_image(incoming_text, history):
+                    try:
+                        recent_image_data_url = store.load_line_recent_image(image_context_id)
+                    except Exception:
+                        logging.exception("LINE recent image read failed for image edit")
+                        recent_image_data_url = ""
+                    if recent_image_data_url:
+                        try:
+                            try:
+                                _push_image_processing_notice(
+                                    source, str(event.get("webhookEventId", "")), access_token
+                                )
+                            except Exception:
+                                logging.exception("LINE image processing notice failed; continuing")
+                            generated, generated_type = inference_hub.edit_image(
+                                recent_image_data_url, incoming_text
+                            )
+                            original_url, preview_url = store.upload_line_generated_image(
+                                generated, generated_type
+                            )
+                            text = "🎨 小羽已依照最近一張照片完成修改。"
+                            line_bot.reply_image(
+                                reply_token, text, original_url, preview_url, access_token
+                            )
+                            try:
+                                store.add_line_memory(
+                                    conversation_id,
+                                    "user",
+                                    f"[使用者要求修改最近圖片] {incoming_text}",
+                                )
+                                store.add_line_memory(conversation_id, "assistant", text)
+                            except Exception:
+                                logging.exception(
+                                    "LINE memory write failed; recent image edit was delivered"
+                                )
+                        except Exception:
+                            logging.exception("LINE recent image edit failed")
+                            line_bot.reply(
+                                reply_token,
+                                "影像修改服務目前暫時失敗，請稍後再試一次。",
+                                access_token,
+                            )
+                        continue
                 text = "請傳送要修改的圖片；收到後小羽會依照這項要求處理。"
-                _reply_with_daily_briefing(
-                    reply_token, text, access_token, briefing_future
+                _reply_with_welcome(
+                    reply_token, text, access_token, welcome
                 )
                 try:
                     store.add_line_memory(
@@ -371,8 +538,8 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                     incoming_text = line_bot.recent_image_question_prompt(incoming_text)
                 else:
                     text = "最近一張圖片已不存在或超過 24 小時，請重新傳送圖片。"
-                    _reply_with_daily_briefing(
-                        reply_token, text, access_token, briefing_future
+                    _reply_with_welcome(
+                        reply_token, text, access_token, welcome
                     )
                     try:
                         store.add_line_memory(conversation_id, "user", memory_text)
@@ -436,8 +603,8 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                 history=history,
                 image_data_url=image_data_url,
             )
-            _reply_with_daily_briefing(
-                reply_token, text, access_token, briefing_future
+            _reply_with_welcome(
+                reply_token, text, access_token, welcome
             )
             try:
                 store.add_line_memory(conversation_id, "user", memory_text)
@@ -511,11 +678,53 @@ def line_openclaw_callback(req: func.HttpRequest) -> func.HttpResponse:
             market_snapshot.validate(body.get("marketSnapshot"))
             if status == "completed" else None
         )
-        if snapshot:
+        artifact = _openclaw_artifact(body.get("artifact")) if status == "completed" else None
+        image_urls = _openclaw_image_urls(body.get("imageUrls")) if status == "completed" else []
+        if artifact:
+            try:
+                download_url = store.upload_line_artifact(
+                    artifact["raw"], artifact["name"], artifact["contentType"]
+                )
+                line_bot.push_artifact(
+                    str(row.get("targetId", "")), task_id, artifact["name"], download_url,
+                    artifact["size"], result_text, access_token,
+                )
+            except Exception:
+                logging.exception("LINE OpenClaw artifact delivery failed")
+                line_bot.push_text(
+                    str(row.get("targetId", "")),
+                    f"{prefix} {task_id[:8]}\n\n{result_text}\n\n檔案上傳失敗，請重新執行任務。",
+                    access_token, retry_key=task_id,
+                )
+        elif image_urls:
+            delivered_images: list[tuple[str, str]] = []
+            for image_url in image_urls:
+                try:
+                    image_raw, image_type = remote_image.fetch_public_image(image_url)
+                    delivered_images.append(store.upload_line_generated_image(image_raw, image_type))
+                except Exception:
+                    logging.exception("OpenClaw remote image rejected url=%s", image_url[:200])
+            if delivered_images:
+                line_bot.push_images(
+                    str(row.get("targetId", "")), task_id, delivered_images,
+                    f"{prefix} {task_id[:8]}\n\n{result_text}", access_token,
+                )
+            else:
+                line_bot.push_text(
+                    str(row.get("targetId", "")),
+                    f"{prefix} {task_id[:8]}\n\n{result_text}\n\n圖片暫時無法下載，請稍後再試。",
+                    access_token, retry_key=task_id,
+                )
+        elif snapshot:
             store.save_line_openclaw_market_snapshot(task_id, snapshot)
             try:
+                chart_url = ""
+                chart_png = market_snapshot.render_price_chart(snapshot)
+                if chart_png:
+                    chart_url, _ = store.upload_line_generated_image(chart_png, "image/png")
                 line_bot.push_market_snapshot(
-                    str(row.get("targetId", "")), task_id, snapshot, access_token
+                    str(row.get("targetId", "")), task_id, snapshot, access_token,
+                    chart_url=chart_url,
                 )
             except Exception:
                 logging.exception("LINE Flex market snapshot failed; falling back to text")
@@ -548,6 +757,42 @@ def line_openclaw_callback(req: func.HttpRequest) -> func.HttpResponse:
     except Exception:
         logging.exception("LINE OpenClaw completion callback failed")
         return json_response({"error": "callback failed"}, 502)
+
+
+@app.route(route="line-openclaw-daily-dispatch", methods=["POST"])
+def line_openclaw_daily_dispatch(req: func.HttpRequest) -> func.HttpResponse:
+    """Create one owner-only OpenClaw weather/news task from the cam cron job."""
+    supplied = req.headers.get("x-line-openclaw-token", "").strip()
+    if not inference_hub.openclaw_callback_token_matches(supplied):
+        return json_response({"error": "unauthorized"}, 401)
+    try:
+        body = read_body(req)
+        if body.get("kind") != "daily-briefing":
+            return json_response({"error": "invalid kind"}, 400)
+        owner_id = inference_hub._setting("LINE_OWNER_USER_ID").strip()
+        if not owner_id or not line_openclaw.configured():
+            return json_response({"error": "daily dispatch is not configured"}, 503)
+        scheduled_date = str(body.get("scheduledDate", "")).strip()
+        if not scheduled_date:
+            scheduled_date = datetime.now(TAIPEI).date().isoformat()
+        try:
+            datetime.strptime(scheduled_date, "%Y-%m-%d")
+        except ValueError:
+            return json_response({"error": "invalid scheduled date"}, 400)
+        task_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"rocketai-owner-daily:{scheduled_date}"))
+        existing = store.get_line_openclaw_task(task_id)
+        if existing:
+            return json_response({
+                "ok": True, "taskId": task_id,
+                "status": str(existing.get("status", "accepted")), "duplicate": True,
+            })
+        prompt = f"排程日期：{scheduled_date}（Asia/Taipei）。\n\n{DAILY_OPENCLAW_PROMPT}"
+        store.create_line_openclaw_task(task_id, owner_id, prompt)
+        line_openclaw.submit_task(owner_id, prompt, task_id=task_id)
+        return json_response({"ok": True, "taskId": task_id, "status": "accepted"}, 202)
+    except Exception:
+        logging.exception("Scheduled OpenClaw daily briefing dispatch failed")
+        return json_response({"error": "daily dispatch failed"}, 502)
 
 
 @app.route(route="line-inference-smoke", methods=["POST"])

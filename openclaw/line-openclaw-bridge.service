@@ -10,7 +10,8 @@ ExecStart=/usr/bin/python3 /home/tommywu/.openclaw/line_openclaw_bridge.py
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
-PrivateTmp=true
+# The resident X1 Laban player exposes its narrow control socket in host /tmp.
+PrivateTmp=false
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=/home/tommywu/.openclaw
