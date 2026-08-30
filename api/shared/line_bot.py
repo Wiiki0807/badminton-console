@@ -1013,10 +1013,10 @@ def robot_pose_catalog(robot: str, poses: tuple[dict[str, Any], ...]) -> dict[st
             cells.append({
                 "type": "box",
                 "layout": "vertical",
-                "height": "96px",
-                "backgroundColor": "#EAF4EA",
-                "cornerRadius": "12px",
-                "paddingAll": "12px",
+                "height": "70px",
+                "backgroundColor": "#EDF5EA",
+                "cornerRadius": "10px",
+                "paddingAll": "8px",
                 "justifyContent": "center",
                 "action": {
                     "type": "postback",
@@ -1025,7 +1025,7 @@ def robot_pose_catalog(robot: str, poses: tuple[dict[str, Any], ...]) -> dict[st
                     "displayText": f"X1 實機動作：{pose_id}",
                 },
                 "contents": [{
-                    "type": "text", "text": label, "weight": "bold", "size": "md",
+                    "type": "text", "text": label, "weight": "bold", "size": "sm",
                     "color": "#163C1A", "align": "center", "wrap": True,
                 }],
             })
@@ -1034,33 +1034,33 @@ def robot_pose_catalog(robot: str, poses: tuple[dict[str, Any], ...]) -> dict[st
             row_cells = cells[index:index + 2]
             while len(row_cells) < 2:
                 row_cells.append({
-                    "type": "box", "layout": "vertical", "height": "96px",
-                    "backgroundColor": "#F5F7F5", "cornerRadius": "12px",
+                    "type": "box", "layout": "vertical", "height": "70px",
+                    "backgroundColor": "#F5F7F5", "cornerRadius": "10px",
                     "contents": [],
                 })
             rows.append({
-                "type": "box", "layout": "horizontal", "spacing": "md",
-                "margin": "md" if rows else "none", "contents": row_cells,
+                "type": "box", "layout": "horizontal", "spacing": "sm",
+                "margin": "sm" if rows else "none", "contents": row_cells,
             })
         bubbles.append({
             "type": "bubble",
-            "size": "mega",
+            "size": "kilo",
             "header": {
                 "type": "box", "layout": "vertical", "backgroundColor": "#102712",
-                "paddingAll": "20px",
+                "paddingAll": "14px",
                 "contents": [
                     {"type": "text", "text": "X1 實機動作", "weight": "bold",
-                     "size": "xl", "color": "#FFFFFF"},
-                    {"type": "text", "text": f"POSE {page} / {len(groups)}",
-                     "size": "xs", "color": "#9FCA9F", "margin": "sm"},
+                     "size": "lg", "color": "#FFFFFF"},
+                    {"type": "text", "text": f"NVIDIA · POSE {page} / {len(groups)}",
+                     "size": "xxs", "color": "#76B900", "margin": "xs"},
                 ],
             },
             "body": {
-                "type": "box", "layout": "vertical", "paddingAll": "18px",
+                "type": "box", "layout": "vertical", "paddingAll": "12px",
                 "contents": rows,
             },
             "footer": {
-                "type": "box", "layout": "vertical", "paddingAll": "16px",
+                "type": "box", "layout": "vertical", "paddingAll": "10px",
                 "contents": [{"type": "text", "text": "點選後仍需再次確認實機動作",
                               "size": "xs", "color": "#777777", "wrap": True}],
             },
