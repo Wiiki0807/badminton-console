@@ -1,0 +1,25 @@
+name: LINE X1 Rich Menu
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate required secrets
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_OWNER_USER_ID: ${{ secrets.LINE_OWNER_USER_ID }}
+        run: |
+          test -n "${LINE_CHANNEL_ACCESS_TOKEN}" || { echo 'Missing LINE_CHANNEL_ACCESS_TOKEN'; exit 1; }
+          test -n "${LINE_OWNER_USER_ID}" || { echo 'Missing LINE_OWNER_USER_ID'; exit 1; }
+      - name: Deploy owner-only X1 Rich Menu
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_OWNER_USER_ID: ${{ secrets.LINE_OWNER_USER_ID }}
+        run: python scripts/deploy-line-robot-rich-menu.py
