@@ -112,6 +112,13 @@ Administrators；Task Scheduler 參數不包含任何 token。執行結果記錄
 身份且可在無人登入時運作。LINE Push 目標固定為提出提醒的 user ID；若提醒
 是在群組建立，使用者仍須先將 RocketAI 加為好友，才能可靠收到私人通知。
 
+主人每日情報不再由聊天第一句觸發。`nv-ws-tommy` 的 OpenClaw cron 會在
+`Asia/Taipei` 每天 10:00 執行 `scripts/openclaw_daily_dispatch.py`，呼叫受
+`X-Line-OpenClaw-Token` 保護的 `POST /api/line-openclaw-daily-dispatch`。Azure 只使用
+`LINE_OWNER_USER_ID` 建立任務，OpenClaw 再以 `verified-news-digest` 流程整理板橋當日
+天氣與過去 24 小時 NVIDIA／AI／機器人焦點，完成後沿用既有 callback 以 Flex Carousel
+Push 給主人。一般聊天不等待此排程，也不會把每日情報送給其他 LINE ID。
+
 群組與多人聊天室採智慧喚醒：Tag 官方帳號，或以「小羽／RocketAI」開頭時一定回覆；
 未點名的純文字會先由 `openai/openai/gpt-4o-mini` 在無工具、低 token 上限下分類，只有
 高信心且可回答的羽球問題才交由主要模型回覆。一般閒聊、低信心、分類逾時或錯誤都安靜忽略，

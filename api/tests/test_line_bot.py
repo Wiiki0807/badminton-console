@@ -98,25 +98,24 @@ class LineBotAnswerTests(unittest.TestCase):
     def test_non_owner_first_message_gets_welcome_not_private_briefing(
         self, _owner, claim_welcome
     ):
-        future = function_app._start_daily_briefing(
+        result = function_app._welcome_for_message(
             {"type": "user", "userId": "U-new"}, "text"
         )
 
-        result = future.result(timeout=2)
         self.assertIn("歡迎加入 RocketAI", result)
         self.assertIn("多用途 AI 助手", result)
         self.assertNotIn("NVIDIA／AI／機器人焦點", result)
         claim_welcome.assert_called_once_with("U-new")
 
-    @mock.patch("function_app.daily_briefing.for_first_message", return_value="主人每日摘要")
+    @mock.patch("function_app.store.claim_line_welcome")
     @mock.patch("function_app.inference_hub.is_line_owner", return_value=True)
-    def test_owner_first_message_gets_daily_briefing(self, _owner, briefing):
-        future = function_app._start_daily_briefing(
+    def test_owner_message_never_triggers_inline_daily_briefing(self, _owner, claim_welcome):
+        result = function_app._welcome_for_message(
             {"type": "user", "userId": "U-owner"}, "text"
         )
 
-        self.assertEqual("主人每日摘要", future.result(timeout=2))
-        briefing.assert_called_once_with("U-owner")
+        self.assertEqual("", result)
+        claim_welcome.assert_not_called()
 
     @mock.patch.dict("os.environ", {"LINE_OWNER_USER_ID": "U-owner"}, clear=True)
     def test_owner_id_match_fails_closed(self):
@@ -220,17 +219,44 @@ class LineBotAnswerTests(unittest.TestCase):
         self.assertIn("https://example.com/nvidia", result)
 
     @mock.patch("shared.line_bot.request.urlopen")
-    def test_line_reply_can_send_normal_answer_and_daily_briefing(self, urlopen):
+    def test_line_reply_can_send_normal_answer_and_welcome(self, urlopen):
         response = mock.MagicMock()
         response.__enter__.return_value.read.return_value = b"{}"
         urlopen.return_value = response
 
-        line_bot.reply_texts("reply-token", ["原本回答", "每日情報"], "access-token")
+        line_bot.reply_texts("reply-token", ["原本回答", "新朋友歡迎訊息"], "access-token")
 
         sent = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
         self.assertEqual(2, len(sent["messages"]))
         self.assertEqual("原本回答", sent["messages"][0]["text"])
-        self.assertEqual("每日情報", sent["messages"][1]["text"])
+        self.assertEqual("新朋友歡迎訊息", sent["messages"][1]["text"])
+
+    @mock.patch("function_app.line_openclaw.submit_task")
+    @mock.patch("function_app.store.create_line_openclaw_task")
+    @mock.patch("function_app.store.get_line_openclaw_task", return_value=None)
+    @mock.patch("function_app.line_openclaw.configured", return_value=True)
+    @mock.patch("function_app.inference_hub._setting", return_value="U-owner")
+    @mock.patch("function_app.inference_hub.openclaw_callback_token_matches", return_value=True)
+    def test_daily_dispatch_creates_owner_only_openclaw_task(
+        self, _token, _setting, _configured, _existing, create_task, submit_task
+    ):
+        req = function_app.func.HttpRequest(
+            method="POST",
+            url="https://example.test/api/line-openclaw-daily-dispatch",
+            headers={"x-line-openclaw-token": "valid"},
+            body=json.dumps({
+                "kind": "daily-briefing", "scheduledDate": "2026-08-30"
+            }).encode("utf-8"),
+        )
+
+        response = function_app.line_openclaw_daily_dispatch(req)
+
+        self.assertEqual(202, response.status_code)
+        task_id, owner_id, prompt = create_task.call_args.args
+        self.assertEqual("U-owner", owner_id)
+        self.assertIn("Open-Meteo", prompt)
+        self.assertIn("verified-news-digest", prompt)
+        submit_task.assert_called_once_with("U-owner", prompt, task_id=task_id)
 
     @mock.patch.dict("os.environ", {"INFERENCE_HUB_TOKEN": "hub-secret"}, clear=True)
     def test_reminder_dispatch_token_is_domain_separated_from_hub_token(self):
@@ -1258,7 +1284,7 @@ class LineBotAnswerTests(unittest.TestCase):
             mock.patch("function_app.line_bot.verify_signature", return_value=True),
             mock.patch("function_app.store.claim_line_webhook_event", return_value=True),
             mock.patch("function_app.store.list_line_memory", return_value=history),
-            mock.patch("function_app._start_daily_briefing", return_value=None),
+            mock.patch("function_app._welcome_for_message", return_value=""),
             mock.patch("function_app.line_bot.show_loading_animation"),
             mock.patch("function_app.inference_hub.looks_like_reminder_request", return_value=False),
             mock.patch("function_app.store.load_line_recent_image", return_value="data:image/jpeg;base64,YQ==") as load,
