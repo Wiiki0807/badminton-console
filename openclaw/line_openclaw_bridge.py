@@ -40,6 +40,7 @@ X1_GESTURE_CONTROL = STATE_DIR / "x1_gesture_control.py"
 SAFE_X1_GESTURES = {
     "away", "away2", "good", "happy", "hello", "come", "bad", "thanks",
     "goodbye", "nice", "surprised", "wave-happily", "open-two-arms",
+    "nod", "shake-head", "look-at",
 }
 AGENT_RUN_LOCK = threading.Lock()
 MEDIA_RE = re.compile(

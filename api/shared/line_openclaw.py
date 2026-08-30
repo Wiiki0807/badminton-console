@@ -32,7 +32,13 @@ X1_POSES = (
     {"id": "wave-happily", "label": "wave happily"},
     {"id": "open-two-arms", "label": "open two arms"},
 )
-X1_POSE_BY_ID = {str(item["id"]): item for item in X1_POSES}
+X1_HEAD_POSES = (
+    {"id": "nod", "label": "點頭 nod", "headOnly": True},
+    {"id": "shake-head", "label": "搖頭 shake", "headOnly": True},
+    {"id": "look-at", "label": "注視 look at", "headOnly": True},
+)
+X1_ALL_POSES = X1_POSES + X1_HEAD_POSES
+X1_POSE_BY_ID = {str(item["id"]): item for item in X1_ALL_POSES}
 X1_EXTRA_POSES: set[str] = set()
 X1_POSE_PATTERN = "|".join(
     re.escape(value) for value in sorted((*X1_POSE_BY_ID, *X1_EXTRA_POSES), key=len, reverse=True)

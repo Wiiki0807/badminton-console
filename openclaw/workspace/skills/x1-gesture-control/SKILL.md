@@ -11,7 +11,11 @@ Use only `/home/tommywu/.openclaw/x1_gesture_control.py`. Never call ROS2 topics
 
 Allowed gestures are `away`, `away2`, `good`, `happy`, `hello`, `come`, `bad`,
 `thanks`, `goodbye`, `nice`, `surprised`, `wave-happily`, and `open-two-arms`.
-Never invent another name.
+The head-only gestures are `nod`, `shake-head`, and `look-at`. Never invent
+another name. Head control follows the Laban head/rotation symbols by default
+for every play and sequence; use the head-only gestures when the owner asks to
+move only the head. Do not add `--no-head` unless the owner explicitly asks to
+disable head motion.
 Run status before a motion workflow. Real motion is allowed only when the paired
 owner explicitly requests the physical X1 robot; otherwise use preview mode.
 
@@ -21,6 +25,7 @@ Commands:
 /home/tommywu/.openclaw/x1_gesture_control.py status
 /home/tommywu/.openclaw/x1_gesture_control.py play away
 /home/tommywu/.openclaw/x1_gesture_control.py play thanks --real
+/home/tommywu/.openclaw/x1_gesture_control.py play nod --real
 /home/tommywu/.openclaw/x1_gesture_control.py sequence away thanks
 /home/tommywu/.openclaw/x1_gesture_control.py sequence away thanks --real
 /home/tommywu/.openclaw/x1_gesture_control.py stop

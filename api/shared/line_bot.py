@@ -998,23 +998,23 @@ def robot_pose_catalog(robot: str, poses: tuple[dict[str, Any], ...]) -> dict[st
     """Present physical poses as large, swipeable Flex cards instead of tiny menu cells."""
     if robot != "x1" or not 1 <= len(poses) <= 20:
         raise ValueError("invalid robot pose catalog")
-    validated: list[tuple[str, str]] = []
+    validated: list[tuple[str, str, bool]] = []
     for pose in poses:
         pose_id = str(pose.get("id", ""))
         label = str(pose.get("label", pose_id))
         if not re.fullmatch(r"[a-z0-9-]{1,32}", pose_id) or not 1 <= len(label) <= 20:
             raise ValueError("invalid robot pose")
-        validated.append((pose_id, label))
+        validated.append((pose_id, label, bool(pose.get("headOnly"))))
     groups = [validated[index:index + 6] for index in range(0, len(validated), 6)]
     bubbles = []
     for page, group in enumerate(groups, start=1):
         cells = []
-        for pose_id, label in group:
+        for pose_id, label, head_only in group:
             cells.append({
                 "type": "box",
                 "layout": "vertical",
                 "height": "70px",
-                "backgroundColor": "#EDF5EA",
+                "backgroundColor": "#E8F1F7" if head_only else "#EDF5EA",
                 "cornerRadius": "10px",
                 "paddingAll": "8px",
                 "justifyContent": "center",
@@ -1026,7 +1026,8 @@ def robot_pose_catalog(robot: str, poses: tuple[dict[str, Any], ...]) -> dict[st
                 },
                 "contents": [{
                     "type": "text", "text": label, "weight": "bold", "size": "sm",
-                    "color": "#163C1A", "align": "center", "wrap": True,
+                    "color": "#16415C" if head_only else "#163C1A",
+                    "align": "center", "wrap": True,
                 }],
             })
         rows = []
@@ -1053,6 +1054,8 @@ def robot_pose_catalog(robot: str, poses: tuple[dict[str, Any], ...]) -> dict[st
                      "size": "lg", "color": "#FFFFFF"},
                     {"type": "text", "text": f"NVIDIA · POSE {page} / {len(groups)}",
                      "size": "xxs", "color": "#76B900", "margin": "xs"},
+                    {"type": "text", "text": "一般動作同步頭部 · 藍色為純頭部",
+                     "size": "xxs", "color": "#B7CDB8", "margin": "xs"},
                 ],
             },
             "body": {

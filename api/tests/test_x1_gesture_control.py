@@ -27,9 +27,18 @@ class X1GestureControlTests(unittest.TestCase):
     def test_preview_is_default_and_real_is_explicit(self, request, _path):
         x1.play("away", real=False)
         self.assertTrue(request.call_args.args[0]["isaac_only"])
+        self.assertFalse(request.call_args.args[0]["no_head"])
 
         x1.play("away", real=True)
         self.assertFalse(request.call_args.args[0]["isaac_only"])
+        self.assertFalse(request.call_args.args[0]["no_head"])
+
+    @mock.patch.object(x1, "_gesture_path", return_value=Path("/safe/nod.json"))
+    @mock.patch.object(x1, "_request", return_value={"ok": True})
+    def test_head_only_gesture_uses_head_trajectory(self, request, _path):
+        x1.play("nod", real=False)
+        self.assertFalse(request.call_args.args[0]["no_head"])
+        self.assertIn("nod", x1.HEAD_ONLY_GESTURES)
 
     def test_unlisted_gesture_is_rejected(self):
         with self.assertRaises(ValueError):

@@ -61,6 +61,16 @@ class NewsBridgeTests(unittest.TestCase):
                 "robot": "x1", "action": "play", "gesture": "dance"
             })
 
+    @mock.patch("line_openclaw_bridge.subprocess.run")
+    def test_x1_head_only_gesture_is_allowlisted(self, run):
+        run.return_value = mock.Mock(
+            returncode=0, stdout=json.dumps({"ok": True}), stderr=""
+        )
+        bridge._x1_robot_command({
+            "robot": "x1", "action": "play", "gesture": "nod"
+        })
+        self.assertEqual(["play", "nod", "--real"], run.call_args.args[0][-3:])
+
     def test_x1_direct_command_requires_robot_name(self):
         with self.assertRaisesRegex(ValueError, "unsupported robot"):
             bridge._x1_robot_command({"action": "status"})

@@ -36,8 +36,13 @@ GESTURE_FILES = {
     "surprised": "surprised",
     "wave-happily": "wave happily",
     "open-two-arms": "open two arms",
+    # Head-only Laban gestures. The unchanged arm symbols stay at ready.
+    "nod": "nod",
+    "shake-head": "shake head",
+    "look-at": "look at",
 }
 SAFE_GESTURES = frozenset(GESTURE_FILES)
+HEAD_ONLY_GESTURES = frozenset({"nod", "shake-head", "look-at"})
 MAX_SEQUENCE_STEPS = 5
 
 
@@ -79,21 +84,25 @@ def _cancel_sequences() -> int:
 def status() -> dict[str, Any]:
     result = _request({"cmd": "status"}, timeout=3.0)
     result["safe_gestures"] = sorted(SAFE_GESTURES)
+    result["head_mode"] = "follow_laban"
+    result["head_only_gestures"] = sorted(HEAD_ONLY_GESTURES)
     return result
 
 
-def play(name: str, *, real: bool) -> dict[str, Any]:
+def play(name: str, *, real: bool, head: bool = True) -> dict[str, Any]:
     _cancel_sequences()
-    return _play(name, real=real)
+    return _play(name, real=real, head=head)
 
 
-def _play(name: str, *, real: bool) -> dict[str, Any]:
+def _play(name: str, *, real: bool, head: bool = True) -> dict[str, Any]:
     return _request({
         "cmd": "play",
         "gesture": str(_gesture_path(name)),
         "speed": 1.0,
         "approach": 2.0,
-        "no_head": True,
+        # This bounded controller opts in so LINE/OpenClaw follow the Laban
+        # head symbols and head-only gestures are not silent no-ops.
+        "no_head": not head,
         "return_ready": True,
         "isaac_only": not real,
     })
@@ -104,7 +113,9 @@ def stop() -> dict[str, Any]:
     return _request({"cmd": "stop"}, timeout=3.0)
 
 
-def sequence(names: list[str], *, real: bool, pause: float) -> dict[str, Any]:
+def sequence(
+    names: list[str], *, real: bool, pause: float, head: bool = True
+) -> dict[str, Any]:
     if not 1 <= len(names) <= MAX_SEQUENCE_STEPS:
         raise ValueError(f"sequence must contain 1 to {MAX_SEQUENCE_STEPS} steps")
     for name in names:
@@ -114,7 +125,7 @@ def sequence(names: list[str], *, real: bool, pause: float) -> dict[str, Any]:
     for name in names:
         if _epoch() != run_epoch:
             return {"ok": False, "cancelled": True, "completed": completed}
-        result = _play(name, real=real)
+        result = _play(name, real=real, head=head)
         completed.append({"gesture": name, "result": result})
         if not result.get("ok"):
             return {"ok": False, "completed": completed}
@@ -134,23 +145,27 @@ def main() -> None:
     play_parser = sub.add_parser("play")
     play_parser.add_argument("gesture", choices=sorted(SAFE_GESTURES))
     play_parser.add_argument("--real", action="store_true")
+    play_parser.add_argument("--no-head", action="store_true")
     sub.add_parser("stop")
     sequence_parser = sub.add_parser("sequence")
     sequence_parser.add_argument("gestures", nargs="+", choices=sorted(SAFE_GESTURES))
     sequence_parser.add_argument("--real", action="store_true")
     sequence_parser.add_argument("--pause", type=float, default=0.5)
+    sequence_parser.add_argument("--no-head", action="store_true")
     args = parser.parse_args()
 
     if args.action == "status":
         result = status()
     elif args.action == "play":
-        result = play(args.gesture, real=args.real)
+        result = play(args.gesture, real=args.real, head=not args.no_head)
     elif args.action == "stop":
         result = stop()
     else:
         if not 0 <= args.pause <= 3:
             raise ValueError("pause must be between 0 and 3 seconds")
-        result = sequence(args.gestures, real=args.real, pause=args.pause)
+        result = sequence(
+            args.gestures, real=args.real, pause=args.pause, head=not args.no_head
+        )
     print(json.dumps(result, ensure_ascii=False))
 
 
