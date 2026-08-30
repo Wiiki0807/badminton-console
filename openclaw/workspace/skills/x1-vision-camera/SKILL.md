@@ -48,3 +48,23 @@ paired owner and never call them public URLs.
 
 For detection, summarize the JSON result and append exactly `MEDIA:<media path>`
 when `media` is present so LINE receives the annotated bounding-box image.
+
+## Persistent visual rules
+
+Use only `/home/tommywu/.openclaw/x1_visual_reactor_control.py` to start, update,
+inspect, or stop a persistent LocateAnything-to-gesture rule. Never create loops,
+cron jobs, or background shell processes yourself. The resident service confirms
+continuous detection for 1-3 seconds, repeats actions only after the configured
+5-3600 second interval, and sends one LINE image when an object first appears.
+It does not notify again while the same object remains present; after disappearance
+and reappearance it sends a new event.
+
+```bash
+/home/tommywu/.openclaw/x1_visual_reactor_control.py start --query light --actions nod shake-head --view head --confirm-seconds 1.5 --repeat-seconds 30
+/home/tommywu/.openclaw/x1_visual_reactor_control.py status
+/home/tommywu/.openclaw/x1_visual_reactor_control.py stop
+```
+
+`start` also updates an existing rule. Always state the selected query, actions,
+view, confirmation time, and repeat interval. `stop` disables monitoring and
+cancels current X1 motion.
