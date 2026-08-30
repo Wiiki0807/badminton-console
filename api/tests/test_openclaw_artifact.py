@@ -193,6 +193,40 @@ class OpenClawArtifactTests(unittest.TestCase):
         self.assertEqual(2, len(push.call_args.args[2]))
         finish.assert_called_once_with(task_id, "completed")
 
+    @mock.patch("function_app.line_bot.push_images")
+    @mock.patch(
+        "function_app.store.upload_line_generated_image",
+        return_value=("https://blob.example/event.jpg", "https://blob.example/event-p.jpg"),
+    )
+    @mock.patch("function_app.inference_hub.openclaw_callback_token_matches", return_value=True)
+    @mock.patch.dict(
+        "os.environ",
+        {"LINE_CHANNEL_ACCESS_TOKEN": "line-token", "LINE_OWNER_USER_ID": "U-owner"},
+        clear=True,
+    )
+    def test_visual_reactor_event_pushes_first_appearance_image(self, _auth, upload, push):
+        raw = b"\xff\xd8event\xff\xd9"
+        event_id = "32345678-1234-1234-1234-123456789012"
+        body = json.dumps({
+            "eventId": event_id, "robot": "x1", "query": "light", "count": 2,
+            "actions": ["nod", "shake-head"], "view": "head", "actionOk": True,
+            "artifact": {
+                "name": "event.jpg", "contentType": "image/jpeg", "size": len(raw),
+                "base64": base64.b64encode(raw).decode(),
+            },
+        }).encode()
+        req = function_app.func.HttpRequest(
+            method="POST", url="https://example.test/api/line-visual-reactor-event",
+            headers={"x-line-openclaw-token": "secret"}, body=body,
+        )
+
+        response = function_app.line_visual_reactor_event(req)
+
+        self.assertEqual(200, response.status_code)
+        upload.assert_called_once_with(raw, "image/jpeg")
+        self.assertEqual("U-owner", push.call_args.args[0])
+        self.assertIn("nod → shake-head", push.call_args.args[3])
+
     @mock.patch("shared.store.generate_blob_sas", return_value="signature")
     @mock.patch("shared.store.BlobServiceClient")
     @mock.patch.dict(

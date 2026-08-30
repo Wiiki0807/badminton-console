@@ -1,0 +1,19 @@
+[Unit]
+Description=X1 LocateAnything visual gesture reactor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/home/tommywu/.openclaw/.env
+ExecStart=/usr/bin/python3 /home/tommywu/.openclaw/x1_visual_reactor.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/tommywu/.openclaw
+
+[Install]
+WantedBy=default.target

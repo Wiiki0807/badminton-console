@@ -175,6 +175,12 @@ class NewsBridgeTests(unittest.TestCase):
         self.assertEqual([{"name": "head.jpg"}, {"name": "left.jpg"}], payload["artifacts"])
         self.assertEqual([mock.call("head"), mock.call("left-hand")], capture.call_args_list)
 
+    def test_visual_reactor_intent_is_separate_from_one_shot_detection(self):
+        self.assertIsNotNone(
+            bridge.X1_VISUAL_REACTOR_RE.search("偵測到 light 時播放 nod 和 shake-head")
+        )
+        self.assertIsNotNone(bridge.X1_VISUAL_REACTOR_RE.search("停止視覺迎賓模式"))
+
     def test_rejects_sensitive_workspace_artifact(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)

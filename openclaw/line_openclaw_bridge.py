@@ -81,6 +81,11 @@ X1_LOCATE_REQUEST_RE = re.compile(
     r"(?:LocateAnything|物件偵測|(?:偵測|辨識|找出).{0,24}(?:數量|幾個|位置|座標|框|bounding))",
     re.IGNORECASE | re.DOTALL,
 )
+X1_VISUAL_REACTOR_RE = re.compile(
+    r"(?:視覺迎賓|視覺監聽|視覺規則|(?:偵測|看到).{0,24}(?:時|就).{0,24}(?:播放|執行|做)|"
+    r"(?:停止|關閉|查詢|更新).{0,16}(?:迎賓|監聽|偵測規則))",
+    re.IGNORECASE | re.DOTALL,
+)
 NEWS_JSON_INSTRUCTION = """
 
 LINE 顯示契約：完成 verified-news-digest 搜尋與交叉查證後，只輸出一個 JSON 物件，
@@ -372,6 +377,15 @@ def _run_agent(task_id: str, text: str, callback_url: str) -> None:
                 "安全約束：只可呼叫 exec，且 command 必須完全是 "
                 "'/home/tommywu/.openclaw/robot_control.py status'；"
                 "不可使用 find、grep、cat、shell 組合或其他命令。執行後依使用者要求回覆。\n\n"
+                f"使用者要求：{text}"
+            )
+        elif X1_VISUAL_REACTOR_RE.search(text):
+            text = (
+                "X1 持續視覺規則安全約束：必須使用 x1-vision-camera skill，且只可透過 exec "
+                "直接呼叫 /home/tommywu/.openclaw/x1_visual_reactor_control.py。"
+                "不得自行建立 loop、cron、systemd 或背景程序。start/update 必須明確提供 --query、"
+                "--actions、--view、--confirm-seconds、--repeat-seconds；未指定時使用 head、1.5 秒、"
+                "30 秒。停止必須呼叫 stop，查詢必須呼叫 status。\n\n"
                 f"使用者要求：{text}"
             )
         elif X1_LOCATE_REQUEST_RE.search(text):

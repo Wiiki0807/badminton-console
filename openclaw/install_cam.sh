@@ -85,6 +85,10 @@ install -o "${user_name}" -g "${user_name}" -m 700 \
 install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/x1_locate_control.py" "${state_dir}/x1_locate_control.py"
 install -o "${user_name}" -g "${user_name}" -m 700 \
+  "${source_dir}/x1_visual_reactor.py" "${state_dir}/x1_visual_reactor.py"
+install -o "${user_name}" -g "${user_name}" -m 700 \
+  "${source_dir}/x1_visual_reactor_control.py" "${state_dir}/x1_visual_reactor_control.py"
+install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/robot_control.py" "${state_dir}/robot_control.py"
 install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/azure_callback.py" "${state_dir}/azure_callback.py"
@@ -123,12 +127,17 @@ fi
 install -o "${user_name}" -g "${user_name}" -m 644 \
   "${source_dir}/line-openclaw-bridge.service" \
   "${user_home}/.config/systemd/user/line-openclaw-bridge.service"
+install -o "${user_name}" -g "${user_name}" -m 644 \
+  "${source_dir}/x1-visual-reactor.service" \
+  "${user_home}/.config/systemd/user/x1-visual-reactor.service"
 
 loginctl enable-linger "${user_name}"
 runuser -u "${user_name}" -- env XDG_RUNTIME_DIR=/run/user/1000 \
   systemctl --user daemon-reload
 runuser -u "${user_name}" -- env XDG_RUNTIME_DIR=/run/user/1000 \
   systemctl --user enable --now line-openclaw-bridge.service
+runuser -u "${user_name}" -- env XDG_RUNTIME_DIR=/run/user/1000 \
+  systemctl --user enable --now x1-visual-reactor.service
 if runuser -u "${user_name}" -- env XDG_RUNTIME_DIR=/run/user/1000 \
   systemctl --user is-enabled openclaw-gateway.service >/dev/null 2>&1; then
   runuser -u "${user_name}" -- env XDG_RUNTIME_DIR=/run/user/1000 \
@@ -137,7 +146,7 @@ fi
 
 # Keep the gateway exec policy narrow and reproducible. These executable
 # wrappers validate every action/argument internally; never allowlist python3.
-for wrapper in x1_camera_control.py x1_locate_control.py; do
+for wrapper in x1_camera_control.py x1_locate_control.py x1_visual_reactor_control.py; do
   runuser -u "${user_name}" -- env HOME="${user_home}" bash -lc \
     "source \"${user_home}/.nvm/nvm.sh\" && source \"${env_file}\" && openclaw approvals allowlist add --agent main \"${state_dir}/${wrapper}\" >/dev/null"
 done

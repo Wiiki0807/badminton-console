@@ -844,6 +844,45 @@ def line_openclaw_callback(req: func.HttpRequest) -> func.HttpResponse:
         return json_response({"error": "callback failed"}, 502)
 
 
+@app.route(route="line-visual-reactor-event", methods=["POST"])
+def line_visual_reactor_event(req: func.HttpRequest) -> func.HttpResponse:
+    """Push one authenticated first-appearance visual event to the paired owner."""
+    supplied = req.headers.get("x-line-openclaw-token", "").strip()
+    if not inference_hub.openclaw_callback_token_matches(supplied):
+        return json_response({"error": "unauthorized"}, 401)
+    access_token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    owner_id = inference_hub._setting("LINE_OWNER_USER_ID").strip()
+    if not access_token or not owner_id:
+        return json_response({"error": "LINE 尚未完成設定"}, 503)
+    try:
+        body = read_body(req)
+        event_id = str(uuid.UUID(str(body.get("eventId", ""))))
+        if str(body.get("robot", "")).lower() != "x1":
+            raise ValueError("unsupported robot")
+        query = str(body.get("query", "")).strip()[:120]
+        count = int(body.get("count", 0))
+        actions = [str(item)[:40] for item in body.get("actions", [])[:5]]
+        view = str(body.get("view", "head"))
+        if not query or not 0 <= count <= 100 or not actions or view not in {"head", "left-hand", "right-hand"}:
+            raise ValueError("invalid visual event")
+        artifact = _openclaw_artifact(body.get("artifact"))
+        if not artifact or artifact["contentType"] not in {"image/jpeg", "image/png", "image/webp"}:
+            raise ValueError("invalid visual event image")
+        action_status = "已執行" if body.get("actionOk") is True else "動作執行失敗"
+        text = (
+            f"👁️ X1 偵測到 {count} 個 {query}\n"
+            f"視角：{view}\n動作：{' → '.join(actions)}（{action_status}）"
+        )
+        image_pair = store.upload_line_generated_image(artifact["raw"], artifact["contentType"])
+        line_bot.push_images(owner_id, event_id, [image_pair], text, access_token)
+        return json_response({"ok": True, "eventId": event_id})
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return json_response({"error": "invalid request"}, 400)
+    except Exception:
+        logging.exception("LINE visual reactor event delivery failed")
+        return json_response({"error": "event delivery failed"}, 502)
+
+
 @app.route(route="line-openclaw-daily-dispatch", methods=["POST"])
 def line_openclaw_daily_dispatch(req: func.HttpRequest) -> func.HttpResponse:
     """Create one owner-only OpenClaw weather/news task from the cam cron job."""
