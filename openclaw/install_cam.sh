@@ -135,5 +135,12 @@ if runuser -u "${user_name}" -- env XDG_RUNTIME_DIR=/run/user/1000 \
     systemctl --user restart openclaw-gateway.service
 fi
 
+# Keep the gateway exec policy narrow and reproducible. These executable
+# wrappers validate every action/argument internally; never allowlist python3.
+for wrapper in x1_camera_control.py x1_locate_control.py; do
+  runuser -u "${user_name}" -- env HOME="${user_home}" bash -lc \
+    "source \"${user_home}/.nvm/nvm.sh\" && source \"${env_file}\" && openclaw approvals allowlist add --agent main \"${state_dir}/${wrapper}\" >/dev/null"
+done
+
 echo "OpenClaw bridge installed and enabled"
 echo "PAIR_CODE=${pair_code}"
