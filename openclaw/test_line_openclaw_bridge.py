@@ -132,6 +132,30 @@ class NewsBridgeTests(unittest.TestCase):
         self.assertEqual(expected, base64.b64decode(artifact["base64"]))
         self.assertNotIn("MEDIA:", cleaned)
 
+    @mock.patch("line_openclaw_bridge._extract_artifact")
+    @mock.patch("line_openclaw_bridge.subprocess.run")
+    def test_x1_head_snapshot_uses_bounded_camera_wrapper(self, run, extract):
+        run.return_value = mock.Mock(
+            returncode=0,
+            stdout=json.dumps({
+                "ok": True, "media": "/safe/x1-head.jpg",
+                "camera": "USB Camera #3", "width": 640, "height": 480,
+            }),
+            stderr="",
+        )
+        extract.return_value = ({"name": "x1-head.jpg"}, "")
+
+        artifact, caption = bridge._capture_x1_head_snapshot()
+
+        self.assertEqual("x1-head.jpg", artifact["name"])
+        self.assertIn("640×480", caption)
+        self.assertEqual("snapshot", run.call_args.args[0][-1])
+
+    def test_x1_camera_photo_request_is_detected(self):
+        self.assertIsNotNone(
+            bridge.X1_CAMERA_SNAPSHOT_RE.search("請將 X1 機器人頭部視角的照片拍給我")
+        )
+
     def test_rejects_sensitive_workspace_artifact(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
