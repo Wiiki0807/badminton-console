@@ -61,6 +61,16 @@ IMAGE_EDIT_SOURCE_PATTERN = re.compile(
     r"(?:照片|圖片|圖|轉成|改成|風格)",
     re.IGNORECASE,
 )
+IMAGE_STYLE_REQUEST_PATTERN = re.compile(
+    r"(?:水彩|漫畫|卡通|動畫|插畫|油畫|素描|吉卜力|宮崎駿|風格化|畫風|風格)",
+    re.IGNORECASE,
+)
+RECENT_IMAGE_EDIT_REFERENCE_PATTERN = re.compile(
+    r"(?:基於|依據|依照|根據|使用|用).{0,16}(?:這|它|剛才|剛剛|前面|照片|圖片|圖)|"
+    r"(?:這(?:一)?張?|那(?:一)?張?|剛才|剛剛|前面|上一張|原圖|它).{0,12}(?:照片|圖片|圖|改|轉|變|畫|做|風格)|"
+    r"^\s*(?:請)?(?:把)?(?:它)?(?:改|轉|變|畫|做)",
+    re.IGNORECASE,
+)
 IMAGE_GENERATION_INTENT_PATTERN = re.compile(
     r"(?:產生|產出|生成|創作|繪製|畫出?|做出?|製作).{0,120}"
     r"(?:圖片|圖像|插圖|畫面|照片|圖)|"
@@ -472,26 +482,47 @@ def is_image_generation_request(text: str) -> bool:
 def image_request_intent(
     text: str, history: list[dict[str, str]] | None = None
 ) -> str:
-    """Use deterministic fast paths, then 4o-mini for unmatched image semantics."""
+    """Keep deterministic commands fast; let 4o-mini resolve recent-image ambiguity."""
     bounded = str(text or "").strip()
     if not bounded:
         return "chat"
+    recent_history = history or []
+    has_recent_image = history_has_recent_image(recent_history)
     is_edit = bool(
         IMAGE_EDIT_INTENT_PATTERN.search(bounded)
         and not OCR_INTENT_PATTERN.search(bounded)
     )
-    # A request that explicitly depends on supplied pixels is an edit even if it
-    # also says "產生". Check this before the text-to-image fast path.
+    is_generate = is_image_generation_request(bounded)
+    is_style_request = bool(IMAGE_STYLE_REQUEST_PATTERN.search(bounded))
+    # "下一張" is an explicit state-changing command and does not benefit from
+    # a semantic round trip.
+    if is_edit and NEXT_IMAGE_PATTERN.search(bounded):
+        return "image_edit"
+    # Once pixels exist, phrases such as "基於這照片產生水彩畫風" are ambiguous:
+    # 產生 can mean transform rather than create from scratch. Do not let the
+    # broad generation regex preempt the semantic classifier in this state.
+    if has_recent_image and (is_edit or is_generate or is_style_request):
+        semantic = inference_hub.classify_image_intent(bounded, recent_history)
+        intent = str(semantic.get("intent", "chat"))
+        if intent in {"image_generate", "image_edit", "image_question", "ocr"}:
+            return intent
+        # Fail safely when the classifier is unavailable: an explicit reference
+        # to cached pixels plus an edit/style request must never create an
+        # unrelated image from scratch.
+        if (is_edit or is_style_request) and RECENT_IMAGE_EDIT_REFERENCE_PATTERN.search(bounded):
+            return "image_edit"
+    # Without cached pixels, explicit supplied-photo language remains a reliable
+    # edit fast path; otherwise an unambiguous standalone generation stays fast.
     if is_edit and IMAGE_EDIT_SOURCE_PATTERN.search(bounded):
         return "image_edit"
-    if is_image_generation_request(bounded):
+    if is_generate:
         return "image_generate"
     if (
         is_edit
         and (NEXT_IMAGE_PATTERN.search(bounded) or IMAGE_REQUEST_PATTERN.search(bounded))
     ):
         return "image_edit"
-    return str(inference_hub.classify_image_intent(bounded, history or []).get("intent", "chat"))
+    return str(inference_hub.classify_image_intent(bounded, recent_history).get("intent", "chat"))
 
 
 def history_has_recent_image(history: list[dict[str, str]]) -> bool:

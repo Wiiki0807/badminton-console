@@ -640,6 +640,10 @@ class LineBotAnswerTests(unittest.TestCase):
 
     @mock.patch("shared.line_bot.inference_hub.classify_image_intent")
     def test_recent_photo_style_request_edits_cached_image(self, classify):
+        classify.return_value = {
+            "intent": "image_edit", "confidence": 0.98,
+            "reason": "要求轉換最近圖片風格",
+        }
         history = [{
             "role": "user",
             "content": "[使用者傳送一張圖片，要求一般圖片理解]",
@@ -651,7 +655,60 @@ class LineBotAnswerTests(unittest.TestCase):
         self.assertFalse(line_bot.should_edit_recent_image(
             "請把我下一張照片轉換成水彩風格", history
         ))
-        classify.assert_not_called()
+        classify.assert_called_once_with(text, history)
+
+    @mock.patch("shared.line_bot.inference_hub.classify_image_intent")
+    def test_recent_image_semantics_do_not_depend_on_measure_word(self, classify):
+        classify.return_value = {
+            "intent": "image_edit", "confidence": 0.99,
+            "reason": "兩句都指涉最近圖片",
+        }
+        history = [{
+            "role": "user",
+            "content": "[使用者傳送一張圖片，要求一般圖片理解]",
+        }]
+
+        without_measure = line_bot.image_request_intent(
+            "基於這照片產生水彩畫風格", history
+        )
+        with_measure = line_bot.image_request_intent(
+            "基於這張照片產生水彩畫風格", history
+        )
+
+        self.assertEqual("image_edit", without_measure)
+        self.assertEqual("image_edit", with_measure)
+        self.assertEqual(2, classify.call_count)
+
+    @mock.patch("shared.line_bot.inference_hub.classify_image_intent")
+    def test_recent_image_edit_fails_safe_when_classifier_is_unavailable(self, classify):
+        classify.return_value = {
+            "intent": "chat", "confidence": 0.0, "reason": "classifier unavailable",
+        }
+        history = [{
+            "role": "user",
+            "content": "[使用者傳送一張圖片，要求一般圖片理解]",
+        }]
+
+        self.assertEqual(
+            "image_edit",
+            line_bot.image_request_intent("基於這照片產生水彩畫風格", history),
+        )
+
+    @mock.patch("shared.line_bot.inference_hub.classify_image_intent")
+    def test_recent_image_does_not_force_an_unrelated_new_scene_to_edit(self, classify):
+        classify.return_value = {
+            "intent": "image_generate", "confidence": 0.97,
+            "reason": "明確要求創作無關的新場景",
+        }
+        history = [{
+            "role": "user",
+            "content": "[使用者傳送一張圖片，要求一般圖片理解]",
+        }]
+
+        self.assertEqual(
+            "image_generate",
+            line_bot.image_request_intent("另外產生一張海底城市圖片", history),
+        )
 
     def test_semantic_image_edit_marker_is_consumed_by_next_image(self):
         history = [{
@@ -681,13 +738,15 @@ class LineBotAnswerTests(unittest.TestCase):
         urlopen.return_value = response
 
         result = inference_hub.classify_image_intent(
-            "讓我看看機器手臂工作的樣子", []
+            "另外產生一張與前圖無關的機器手臂工作圖片",
+            [{"role": "user", "content": "[使用者傳送一張圖片，要求一般圖片理解]"}],
         )
 
         self.assertEqual("image_generate", result["intent"])
         sent = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
         self.assertEqual("openai/openai/gpt-4o-mini", sent["model"])
         self.assertEqual([], sent["tool_names"])
+        self.assertIn("最近圖片：有", sent["messages"][0]["content"])
 
     @mock.patch("function_app.line_bot.push_text")
     def test_long_image_notice_is_one_push_with_stable_retry_key(self, push):
