@@ -72,7 +72,7 @@ MARKET_CHART_RE = re.compile(
     r"(?:圖表|曲線圖|折線圖|走勢圖|趨勢圖|chart|line\s*chart|plot)", re.IGNORECASE
 )
 X1_CAMERA_SNAPSHOT_RE = re.compile(
-    r"(?=.*(?:X1|機器人))(?=.*(?:頭部|視角|相機|camera))"
+    r"(?=.*(?:X1|機器人))(?=.*(?:頭部|左手|右手|手部|視角|相機|camera))"
     r"(?=.*(?:照片|拍照|取像|snapshot|影像))",
     re.IGNORECASE | re.DOTALL,
 )
@@ -312,11 +312,19 @@ def _extract_remote_images(text: str) -> tuple[list[str], str]:
     return urls, cleaned
 
 
-def _capture_x1_head_snapshot() -> tuple[dict[str, Any], str]:
+def _requested_x1_camera_view(text: str) -> str:
+    if re.search(r"(?:左手|左臂|left[ -]?(?:hand|arm))", text, re.IGNORECASE):
+        return "left-hand"
+    if re.search(r"(?:右手|右臂|right[ -]?(?:hand|arm))", text, re.IGNORECASE):
+        return "right-hand"
+    return "head"
+
+
+def _capture_x1_snapshot(view: str = "head") -> tuple[dict[str, Any], str]:
     """Capture through the allow-listed wrapper, never arbitrary camera paths."""
     completed = subprocess.run(
-        ["/usr/bin/python3", str(X1_CAMERA_CONTROL), "snapshot"],
-        check=False, capture_output=True, text=True, timeout=12,
+        ["/usr/bin/python3", str(X1_CAMERA_CONTROL), "snapshot", "--view", view],
+        check=False, capture_output=True, text=True, timeout=40,
         env=os.environ.copy(),
     )
     try:
@@ -330,7 +338,7 @@ def _capture_x1_head_snapshot() -> tuple[dict[str, Any], str]:
     if not artifact:
         raise RuntimeError("X1 camera snapshot could not be attached")
     caption = (
-        f"📷 X1 頭部視角（{value.get('camera', 'USB Camera #3')}，"
+        f"📷 {value.get('description', 'X1 視角')}（{value.get('camera', '')}，"
         f"{value.get('width', 0)}×{value.get('height', 0)}）"
     )
     return artifact, caption
@@ -339,7 +347,7 @@ def _capture_x1_head_snapshot() -> tuple[dict[str, Any], str]:
 def _run_agent(task_id: str, text: str, callback_url: str) -> None:
     try:
         if X1_CAMERA_SNAPSHOT_RE.search(text):
-            artifact, caption = _capture_x1_head_snapshot()
+            artifact, caption = _capture_x1_snapshot(_requested_x1_camera_view(text))
             _callback(callback_url, {
                 "taskId": task_id, "status": "completed", "text": caption,
                 "artifact": artifact,
