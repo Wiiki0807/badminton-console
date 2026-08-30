@@ -16,6 +16,20 @@ COMMAND_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 PAIR_RE = re.compile(r"^(?:openclaw|小羽)\s*配對\s+([A-Za-z0-9_-]{6,80})$", re.IGNORECASE)
+ROBOT_PLAY_RE = re.compile(
+    r"^(?:小羽|rocketai)\s*(?:請\s*)?(?:播放(?:動作|手勢)?|做(?:動作|手勢)?|手勢)"
+    r"\s*[：:]?\s*(away2?|thanks)\s*$",
+    re.IGNORECASE,
+)
+ROBOT_STOP_RE = re.compile(
+    r"^(?:小羽|rocketai)\s*(?:請\s*)?(?:停止|停下|取消)(?:機器人|x1)?(?:動作|手勢)?\s*$",
+    re.IGNORECASE,
+)
+ROBOT_STATUS_RE = re.compile(
+    r"^(?:小羽|rocketai)\s*(?:請\s*)?(?:查詢|查看|回報)?\s*(?:機器人|x1)"
+    r"(?:的)?(?:狀態|狀況)\s*$",
+    re.IGNORECASE,
+)
 
 
 def configured() -> bool:
@@ -34,6 +48,19 @@ def parse_command(text: str) -> dict[str, str] | None:
     matched = COMMAND_RE.fullmatch(bounded)
     if matched and matched.group(1).strip():
         return {"action": "task", "text": matched.group(1).strip()[:8000]}
+    return None
+
+
+def parse_robot_command(text: str) -> dict[str, str] | None:
+    """Parse only explicit, bounded X1 commands; normal conversation must not move it."""
+    bounded = str(text or "").strip()[:160]
+    matched = ROBOT_PLAY_RE.fullmatch(bounded)
+    if matched:
+        return {"action": "play", "gesture": matched.group(1).lower()}
+    if ROBOT_STOP_RE.fullmatch(bounded):
+        return {"action": "stop"}
+    if ROBOT_STATUS_RE.fullmatch(bounded):
+        return {"action": "status"}
     return None
 
 
@@ -72,6 +99,13 @@ def submit_task(user_id: str, text: str, task_id: str = "") -> str:
         "callbackUrl": inference_hub._setting("LINE_OPENCLAW_CALLBACK_URL"),
     })
     return str(result.get("taskId") or task_id)
+
+
+def robot_command(user_id: str, action: str, gesture: str = "") -> dict[str, Any]:
+    payload = {"userId": user_id, "action": action}
+    if gesture:
+        payload["gesture"] = gesture
+    return _post("/v1/robot", payload, timeout=15)
 
 
 def sync_reminder(action: str, rows: list[dict[str, Any]]) -> None:

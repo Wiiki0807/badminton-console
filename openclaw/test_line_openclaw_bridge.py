@@ -1,4 +1,5 @@
 import base64
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -8,6 +9,23 @@ import line_openclaw_bridge as bridge
 
 
 class NewsBridgeTests(unittest.TestCase):
+    @mock.patch("line_openclaw_bridge.subprocess.run")
+    def test_x1_direct_play_uses_allowlisted_controller_and_real_mode(self, run):
+        run.return_value = mock.Mock(
+            returncode=0, stdout=json.dumps({"ok": True}), stderr=""
+        )
+
+        result = bridge._x1_robot_command({"action": "play", "gesture": "thanks"})
+
+        self.assertTrue(result["ok"])
+        command = run.call_args.args[0]
+        self.assertEqual("/usr/bin/python3", command[0])
+        self.assertEqual(["play", "thanks", "--real"], command[-3:])
+
+    def test_x1_direct_play_rejects_unknown_gesture(self):
+        with self.assertRaisesRegex(ValueError, "allow-listed"):
+            bridge._x1_robot_command({"action": "play", "gesture": "dance"})
+
     def test_news_request_gets_structured_contract(self):
         result = bridge._news_task_message("整理機器人近期新聞")
         self.assertIn("verified_news_digest", result)

@@ -280,6 +280,51 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                     reply_token, "已清除這個對話最近的記憶。", access_token, welcome
                 )
                 continue
+            robot_command = (
+                line_openclaw.parse_robot_command(incoming_text)
+                if message_type == "text" and not line_bot.is_group_source(source)
+                else None
+            )
+            if robot_command:
+                user_id = str(source.get("userId", ""))
+                if not inference_hub.is_line_owner(user_id):
+                    text = "這個 X1 動作控制只允許已設定的主人使用。"
+                else:
+                    try:
+                        result = line_openclaw.robot_command(
+                            user_id,
+                            robot_command["action"],
+                            robot_command.get("gesture", ""),
+                        )
+                        action = robot_command["action"]
+                        if action == "status":
+                            online = bool(
+                                result.get("ok")
+                                and result.get("joint_states")
+                                and int(result.get("left_subs", 0)) > 0
+                                and int(result.get("right_subs", 0)) > 0
+                            )
+                            text = (
+                                f"🤖 X1 {'在線' if online else '尚未就緒'}\n"
+                                f"動作：{'播放中' if result.get('playing') else '待命'}\n"
+                                f"Isaac 鏡像：{'已連線' if result.get('isaac_mirror') else '未連線'}"
+                            )
+                        elif action == "stop":
+                            text = "⏹️ X1 動作已停止。" if result.get("ok") else "X1 動作停止失敗。"
+                        else:
+                            gesture = robot_command.get("gesture", "")
+                            text = (
+                                f"▶️ X1 已接受動作：{gesture}。"
+                                if result.get("ok")
+                                else f"X1 無法播放動作：{gesture}。"
+                            )
+                    except PermissionError:
+                        text = "這個 X1 動作控制只允許已配對的主人使用。"
+                    except Exception:
+                        logging.exception("LINE X1 robot command failed")
+                        text = "X1 動作控制目前無法連線，請稍後再試。"
+                _reply_with_welcome(reply_token, text, access_token, welcome)
+                continue
             openclaw_command = (
                 line_openclaw.parse_command(incoming_text)
                 if message_type == "text" and not line_bot.is_group_source(source)
