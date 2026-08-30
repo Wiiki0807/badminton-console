@@ -37,6 +37,7 @@ WORKSPACE_DIR = Path(
     os.environ.get("OPENCLAW_WORKSPACE_DIR", str(STATE_DIR / "workspace"))
 )
 X1_GESTURE_CONTROL = STATE_DIR / "x1_gesture_control.py"
+X1_CAMERA_CONTROL = STATE_DIR / "x1_camera_control.py"
 SAFE_X1_GESTURES = {
     "away", "away2", "good", "happy", "hello", "come", "bad", "thanks",
     "goodbye", "nice", "surprised", "wave-happily", "open-two-arms",
@@ -52,6 +53,7 @@ REMOTE_MEDIA_RE = re.compile(
 ALLOWED_ARTIFACT_SUFFIXES = {
     ".csv", ".css", ".html", ".js", ".json", ".md", ".pdf", ".ps1",
     ".py", ".sh", ".ts", ".txt", ".yaml", ".yml", ".zip",
+    ".jpg", ".jpeg", ".png", ".webp",
 }
 SENSITIVE_ARTIFACT_RE = re.compile(
     r"(?:^|[._-])(?:\.env|credentials?|private|secrets?|tokens?|id_rsa)(?:$|[._-])",
@@ -68,6 +70,11 @@ MARKET_REQUEST_RE = re.compile(
 )
 MARKET_CHART_RE = re.compile(
     r"(?:圖表|曲線圖|折線圖|走勢圖|趨勢圖|chart|line\s*chart|plot)", re.IGNORECASE
+)
+X1_CAMERA_SNAPSHOT_RE = re.compile(
+    r"(?=.*(?:X1|機器人))(?=.*(?:頭部|視角|相機|camera))"
+    r"(?=.*(?:照片|拍照|取像|snapshot|影像))",
+    re.IGNORECASE | re.DOTALL,
 )
 NEWS_JSON_INSTRUCTION = """
 
@@ -305,8 +312,39 @@ def _extract_remote_images(text: str) -> tuple[list[str], str]:
     return urls, cleaned
 
 
+def _capture_x1_head_snapshot() -> tuple[dict[str, Any], str]:
+    """Capture through the allow-listed wrapper, never arbitrary camera paths."""
+    completed = subprocess.run(
+        ["/usr/bin/python3", str(X1_CAMERA_CONTROL), "snapshot"],
+        check=False, capture_output=True, text=True, timeout=12,
+        env=os.environ.copy(),
+    )
+    try:
+        value = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("X1 camera controller returned invalid JSON") from exc
+    if completed.returncode or not isinstance(value, dict) or not value.get("ok"):
+        raise RuntimeError(str(value.get("error") if isinstance(value, dict) else "snapshot failed"))
+    media = str(value.get("media", ""))
+    artifact, _ = _extract_artifact(f"MEDIA:{media}")
+    if not artifact:
+        raise RuntimeError("X1 camera snapshot could not be attached")
+    caption = (
+        f"📷 X1 頭部視角（{value.get('camera', 'USB Camera #3')}，"
+        f"{value.get('width', 0)}×{value.get('height', 0)}）"
+    )
+    return artifact, caption
+
+
 def _run_agent(task_id: str, text: str, callback_url: str) -> None:
     try:
+        if X1_CAMERA_SNAPSHOT_RE.search(text):
+            artifact, caption = _capture_x1_head_snapshot()
+            _callback(callback_url, {
+                "taskId": task_id, "status": "completed", "text": caption,
+                "artifact": artifact,
+            })
+            return
         market_chart_requested = bool(MARKET_CHART_RE.search(text))
         if re.search(r"Robot Voice Hub.{0,20}(?:狀態|在線|線上)", text, re.IGNORECASE):
             text = (

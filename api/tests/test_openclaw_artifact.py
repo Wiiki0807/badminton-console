@@ -123,6 +123,42 @@ class OpenClawArtifactTests(unittest.TestCase):
         )
         finish.assert_called_once_with(task_id, "completed")
 
+    @mock.patch("function_app.store.finish_line_openclaw_task")
+    @mock.patch("function_app.line_bot.push_images")
+    @mock.patch(
+        "function_app.store.upload_line_generated_image",
+        return_value=("https://blob.example/head.jpg", "https://blob.example/head-preview.jpg"),
+    )
+    @mock.patch("function_app.store.get_line_openclaw_task", return_value={"targetId": "U-owner"})
+    @mock.patch("function_app.inference_hub.openclaw_callback_token_matches", return_value=True)
+    @mock.patch.dict("os.environ", {"LINE_CHANNEL_ACCESS_TOKEN": "line-token"}, clear=True)
+    def test_callback_sends_local_camera_artifact_as_native_line_image(
+        self, _auth, _get_task, upload, push, finish
+    ):
+        task_id = "12345678-1234-1234-1234-123456789012"
+        raw = b"\xff\xd8camera-jpeg\xff\xd9"
+        body = json.dumps({
+            "taskId": task_id, "status": "completed", "text": "X1 頭部視角",
+            "artifact": {
+                "name": "x1-head.jpg", "contentType": "image/jpeg",
+                "size": len(raw), "base64": base64.b64encode(raw).decode(),
+            },
+        }).encode()
+        req = function_app.func.HttpRequest(
+            method="POST", url="https://example.test/api/line-openclaw-callback",
+            headers={"x-line-openclaw-token": "secret"}, body=body,
+        )
+
+        response = function_app.line_openclaw_callback(req)
+
+        self.assertEqual(200, response.status_code)
+        upload.assert_called_once_with(raw, "image/jpeg")
+        self.assertEqual(
+            [("https://blob.example/head.jpg", "https://blob.example/head-preview.jpg")],
+            push.call_args.args[2],
+        )
+        finish.assert_called_once_with(task_id, "completed")
+
     @mock.patch("shared.store.generate_blob_sas", return_value="signature")
     @mock.patch("shared.store.BlobServiceClient")
     @mock.patch.dict(

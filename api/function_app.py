@@ -738,13 +738,22 @@ def line_openclaw_callback(req: func.HttpRequest) -> func.HttpResponse:
         image_urls = _openclaw_image_urls(body.get("imageUrls")) if status == "completed" else []
         if artifact:
             try:
-                download_url = store.upload_line_artifact(
-                    artifact["raw"], artifact["name"], artifact["contentType"]
-                )
-                line_bot.push_artifact(
-                    str(row.get("targetId", "")), task_id, artifact["name"], download_url,
-                    artifact["size"], result_text, access_token,
-                )
+                if artifact["contentType"] in {"image/jpeg", "image/png", "image/webp"}:
+                    image_pair = store.upload_line_generated_image(
+                        artifact["raw"], artifact["contentType"]
+                    )
+                    line_bot.push_images(
+                        str(row.get("targetId", "")), task_id, [image_pair],
+                        f"{prefix} {task_id[:8]}\n\n{result_text}", access_token,
+                    )
+                else:
+                    download_url = store.upload_line_artifact(
+                        artifact["raw"], artifact["name"], artifact["contentType"]
+                    )
+                    line_bot.push_artifact(
+                        str(row.get("targetId", "")), task_id, artifact["name"], download_url,
+                        artifact["size"], result_text, access_token,
+                    )
             except Exception:
                 logging.exception("LINE OpenClaw artifact delivery failed")
                 line_bot.push_text(

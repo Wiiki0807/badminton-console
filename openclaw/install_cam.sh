@@ -81,6 +81,8 @@ install -o "${user_name}" -g "${user_name}" -m 700 \
 install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/x1_gesture_control.py" "${state_dir}/x1_gesture_control.py"
 install -o "${user_name}" -g "${user_name}" -m 700 \
+  "${source_dir}/x1_camera_control.py" "${state_dir}/x1_camera_control.py"
+install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/robot_control.py" "${state_dir}/robot_control.py"
 install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/azure_callback.py" "${state_dir}/azure_callback.py"
@@ -107,6 +109,14 @@ if [[ -f "${x1_skill_source}" ]]; then
   install -o "${user_name}" -g "${user_name}" -m 600 \
     "${x1_skill_source}" \
     "${state_dir}/workspace/skills/x1-gesture-control/SKILL.md"
+fi
+camera_skill_source="${source_dir}/workspace/skills/x1-vision-camera/SKILL.md"
+if [[ -f "${camera_skill_source}" ]]; then
+  install -o "${user_name}" -g "${user_name}" -m 700 -d \
+    "${state_dir}/workspace/skills/x1-vision-camera"
+  install -o "${user_name}" -g "${user_name}" -m 600 \
+    "${camera_skill_source}" \
+    "${state_dir}/workspace/skills/x1-vision-camera/SKILL.md"
 fi
 install -o "${user_name}" -g "${user_name}" -m 644 \
   "${source_dir}/line-openclaw-bridge.service" \
