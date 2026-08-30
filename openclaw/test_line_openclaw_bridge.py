@@ -9,6 +9,31 @@ import line_openclaw_bridge as bridge
 
 
 class NewsBridgeTests(unittest.TestCase):
+    def test_extracts_visible_text_from_current_cli_payloads(self):
+        response = {
+            "result": {
+                "payloads": [
+                    {"text": "Stage 2 已完成。"},
+                    {"text": "請輸入渲染指令。"},
+                ]
+            }
+        }
+
+        self.assertEqual(
+            "Stage 2 已完成。\n\n請輸入渲染指令。",
+            bridge._openclaw_visible_text(response),
+        )
+
+    def test_visible_text_prefers_explicit_final_text(self):
+        response = {
+            "result": {
+                "meta": {"finalAssistantVisibleText": "明確完成訊息"},
+                "payloads": [{"text": "較舊 payload"}],
+            }
+        }
+
+        self.assertEqual("明確完成訊息", bridge._openclaw_visible_text(response))
+
     @mock.patch("line_openclaw_bridge.subprocess.run")
     def test_openclaw_failure_reports_sanitized_stderr(self, run):
         run.return_value = mock.Mock(

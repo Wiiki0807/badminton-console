@@ -762,3 +762,42 @@ def upload_line_artifact(raw: bytes, filename: str, content_type: str) -> str:
         expiry=datetime.now(timezone.utc) + timedelta(hours=24),
     )
     return f"{blob.url}?{sas}"
+
+
+def create_line_video_upload(filename: str, size: int) -> tuple[str, str]:
+    """Return short-lived write and 24-hour read URLs for one bounded MP4."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._ -]{0,119}", filename or ""):
+        raise ValueError("invalid video filename")
+    if not filename.lower().endswith(".mp4") or not 1 <= size <= 256 * 1024 * 1024:
+        raise ValueError("invalid video artifact")
+    connection_string = _connection_string()
+    settings = {
+        key.strip(): value.strip()
+        for item in connection_string.split(";") if "=" in item
+        for key, value in [item.split("=", 1)]
+    }
+    account_name = settings.get("AccountName", "")
+    account_key = settings.get("AccountKey", "")
+    if not account_name or not account_key:
+        raise RuntimeError("storage account key is unavailable for LINE video URL")
+    blob_name = f"{LINE_ARTIFACT_PREFIX}{uuid.uuid4().hex}/{filename}"
+    blob = BlobServiceClient.from_connection_string(connection_string).get_blob_client(
+        CONTAINER, blob_name
+    )
+    upload_sas = generate_blob_sas(
+        account_name=account_name,
+        container_name=CONTAINER,
+        blob_name=blob_name,
+        account_key=account_key,
+        permission=BlobSasPermissions(create=True, write=True),
+        expiry=datetime.now(timezone.utc) + timedelta(minutes=30),
+    )
+    read_sas = generate_blob_sas(
+        account_name=account_name,
+        container_name=CONTAINER,
+        blob_name=blob_name,
+        account_key=account_key,
+        permission=BlobSasPermissions(read=True),
+        expiry=datetime.now(timezone.utc) + timedelta(hours=24),
+    )
+    return f"{blob.url}?{upload_sas}", f"{blob.url}?{read_sas}"

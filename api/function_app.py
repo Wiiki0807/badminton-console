@@ -8,9 +8,10 @@ import hmac
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import datetime
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
 
 import azure.functions as func
@@ -150,6 +151,29 @@ def _openclaw_image_urls(value: object) -> list[str]:
         if candidate.startswith("https://") and len(candidate) <= 2000 and candidate not in result:
             result.append(candidate)
     return result
+
+
+def _openclaw_remote_artifact(value: object) -> dict | None:
+    """Validate an artifact already uploaded through our signed Blob ticket."""
+    if not isinstance(value, dict):
+        return None
+    name = str(value.get("name", ""))
+    content_type = str(value.get("contentType", ""))
+    url = str(value.get("downloadUrl", ""))
+    try:
+        size = int(value.get("size", 0))
+    except (TypeError, ValueError):
+        return None
+    host = (urlsplit(url).hostname or "").lower()
+    if (
+        not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._ -]{0,119}", name)
+        or content_type != "video/mp4"
+        or not 1 <= size <= 256 * 1024 * 1024
+        or not url.startswith("https://")
+        or not host.endswith(".blob.core.windows.net")
+    ):
+        return None
+    return {"name": name, "contentType": content_type, "size": size, "downloadUrl": url}
 
 
 @app.route(route="health", methods=["GET"])
@@ -752,9 +776,19 @@ def line_openclaw_callback(req: func.HttpRequest) -> func.HttpResponse:
             market_snapshot.validate(body.get("marketSnapshot"))
             if status == "completed" else None
         )
+        remote_artifact = (
+            _openclaw_remote_artifact(body.get("remoteArtifact"))
+            if status == "completed" else None
+        )
         artifacts = _openclaw_artifacts(body) if status == "completed" else []
         image_urls = _openclaw_image_urls(body.get("imageUrls")) if status == "completed" else []
-        if artifacts:
+        if remote_artifact:
+            line_bot.push_artifact(
+                str(row.get("targetId", "")), task_id,
+                remote_artifact["name"], remote_artifact["downloadUrl"],
+                remote_artifact["size"], result_text, access_token,
+            )
+        elif artifacts:
             try:
                 if all(item["contentType"] in {"image/jpeg", "image/png", "image/webp"} for item in artifacts):
                     image_pairs = [
@@ -842,6 +876,34 @@ def line_openclaw_callback(req: func.HttpRequest) -> func.HttpResponse:
     except Exception:
         logging.exception("LINE OpenClaw completion callback failed")
         return json_response({"error": "callback failed"}, 502)
+
+
+@app.route(route="line-openclaw-artifact-upload", methods=["POST"])
+def line_openclaw_artifact_upload(req: func.HttpRequest) -> func.HttpResponse:
+    """Issue one bounded direct-to-Blob upload ticket for a completed MP4."""
+    supplied = req.headers.get("x-line-openclaw-token", "").strip()
+    if not inference_hub.openclaw_callback_token_matches(supplied):
+        return json_response({"error": "unauthorized"}, 401)
+    try:
+        body = read_body(req)
+        task_id = str(uuid.UUID(str(body.get("taskId", ""))))
+        if not store.get_line_openclaw_task(task_id):
+            return json_response({"error": "unknown task"}, 404)
+        filename = str(body.get("name", ""))
+        size = int(body.get("size", 0))
+        if str(body.get("contentType", "")) != "video/mp4":
+            raise ValueError("unsupported artifact type")
+        upload_url, download_url = store.create_line_video_upload(filename, size)
+        return json_response({
+            "uploadUrl": upload_url,
+            "downloadUrl": download_url,
+            "expiresInSeconds": 86400,
+        })
+    except (TypeError, ValueError):
+        return json_response({"error": "invalid video upload request"}, 400)
+    except Exception:
+        logging.exception("LINE OpenClaw video upload ticket failed")
+        return json_response({"error": "video upload unavailable"}, 503)
 
 
 @app.route(route="line-visual-reactor-event", methods=["POST"])

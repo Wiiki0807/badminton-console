@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import hmac
+import http.client
 import json
 import logging
 import mimetypes
@@ -17,6 +19,7 @@ import re
 import subprocess
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -33,6 +36,7 @@ OPENCLAW_ENTRY = (
 MAX_BODY = 64 * 1024
 MAX_TASK_CHARS = 8_000
 MAX_ARTIFACT_BYTES = 512 * 1024
+MAX_VIDEO_ARTIFACT_BYTES = 256 * 1024 * 1024
 WORKSPACE_DIR = Path(
     os.environ.get("OPENCLAW_WORKSPACE_DIR", str(STATE_DIR / "workspace"))
 )
@@ -85,6 +89,14 @@ X1_VISUAL_REACTOR_RE = re.compile(
     r"(?:視覺迎賓|視覺監聽|視覺規則|(?:偵測|看到).{0,24}(?:時|就).{0,24}(?:播放|執行|做)|"
     r"(?:停止|關閉|查詢|更新).{0,16}(?:迎賓|監聽|偵測規則))",
     re.IGNORECASE | re.DOTALL,
+)
+VIDEO_RENDER_RE = re.compile(
+    r"(?:渲染影片專案|render\s+video\s+project)\s+([a-z0-9][a-z0-9-]{0,39})",
+    re.IGNORECASE,
+)
+VIDEO_DOWNLOAD_RE = re.compile(
+    r"(?:下載影片專案|download\s+video\s+project)\s+([a-z0-9][a-z0-9-]{0,39})",
+    re.IGNORECASE,
 )
 NEWS_JSON_INSTRUCTION = """
 
@@ -210,6 +222,41 @@ def _x1_robot_command(body: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
+def _openclaw_visible_text(response: dict[str, Any]) -> str:
+    """Extract the user-visible assistant reply from supported CLI schemas."""
+    result = response.get("result")
+    if not isinstance(result, dict):
+        result = {}
+    meta = result.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+
+    direct_candidates = (
+        meta.get("finalAssistantVisibleText"),
+        result.get("text"),
+        response.get("text"),
+    )
+    for candidate in direct_candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+
+    # Recent OpenClaw CLI versions return final messages as result.payloads.
+    # Preserve multiple text payloads in their original order.
+    for container in (result, response):
+        payloads = container.get("payloads")
+        if not isinstance(payloads, list):
+            continue
+        texts = [
+            str(item.get("text", "")).strip()
+            for item in payloads
+            if isinstance(item, dict) and str(item.get("text", "")).strip()
+        ]
+        if texts:
+            return "\n\n".join(texts)
+
+    return "任務已完成，但 OpenClaw 沒有傳回可顯示的文字。"
+
+
 def _callback(url: str, payload: dict[str, Any]) -> None:
     if not CALLBACK_RE.fullmatch(url):
         raise ValueError("invalid callback URL")
@@ -227,6 +274,87 @@ def _callback(url: str, payload: dict[str, Any]) -> None:
     )
     with urllib.request.urlopen(request, timeout=20) as response:
         response.read()
+
+
+def _completed_project_video(slug: str) -> Path:
+    project_dir = (WORKSPACE_DIR / "veo-projects" / slug).resolve(strict=True)
+    workspace = WORKSPACE_DIR.resolve(strict=True)
+    if not project_dir.is_relative_to(workspace):
+        raise ValueError("video project is outside the workspace")
+    manifest = json.loads((project_dir / "manifest.json").read_text(encoding="utf-8"))
+    project_name = str(manifest.get("project", ""))
+    if not project_name:
+        raise ValueError("video project manifest is invalid")
+    ascii_slug = re.sub(r"[^a-z0-9]+", "-", project_name.lower()).strip("-")[:40]
+    render_slug = ascii_slug or f"story-{hashlib.sha256(project_name.encode()).hexdigest()[:10]}"
+    output_dir = (WORKSPACE_DIR / "veo-projects" / render_slug).resolve(strict=True)
+    state = json.loads((output_dir / "render-state.json").read_text(encoding="utf-8"))
+    candidate = Path(str(state.get("output", ""))).resolve(strict=True)
+    if (
+        state.get("complete") is not True
+        or not candidate.is_relative_to(workspace)
+        or candidate.suffix.lower() != ".mp4"
+        or not candidate.is_file()
+        or not 1 <= candidate.stat().st_size <= MAX_VIDEO_ARTIFACT_BYTES
+    ):
+        raise ValueError("video project is not complete")
+    return candidate
+
+
+def _stream_blob_put(upload_url: str, source: Path) -> None:
+    parsed = urllib.parse.urlsplit(upload_url)
+    if parsed.scheme != "https" or not (parsed.hostname or "").endswith(".blob.core.windows.net"):
+        raise ValueError("invalid Blob upload URL")
+    connection = http.client.HTTPSConnection(parsed.hostname, parsed.port or 443, timeout=90)
+    target = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+    try:
+        connection.putrequest("PUT", target)
+        connection.putheader("Content-Length", str(source.stat().st_size))
+        connection.putheader("Content-Type", "video/mp4")
+        connection.putheader("x-ms-blob-type", "BlockBlob")
+        connection.putheader("x-ms-blob-content-type", "video/mp4")
+        connection.putheader(
+            "x-ms-blob-content-disposition", f'attachment; filename="{source.name}"'
+        )
+        connection.endheaders()
+        with source.open("rb") as stream:
+            while chunk := stream.read(1024 * 1024):
+                connection.send(chunk)
+        response = connection.getresponse()
+        response.read(4096)
+        if response.status not in {200, 201}:
+            raise RuntimeError(f"Blob upload failed with HTTP {response.status}")
+    finally:
+        connection.close()
+
+
+def _upload_video_artifact(
+    callback_url: str, task_id: str, source: Path,
+) -> dict[str, Any]:
+    ticket_url = callback_url.rsplit("/", 1)[0] + "/line-openclaw-artifact-upload"
+    if not ticket_url.startswith(_env("OPENCLAW_LINE_CALLBACK_URL_PREFIX")):
+        raise ValueError("video upload URL is outside the allow-list")
+    request = urllib.request.Request(
+        ticket_url,
+        data=json.dumps({
+            "taskId": task_id, "name": source.name,
+            "contentType": "video/mp4", "size": source.stat().st_size,
+        }).encode("utf-8"),
+        method="POST",
+        headers={
+            "x-line-openclaw-token": _runtime_env("OPENCLAW_LINE_CALLBACK_TOKEN"),
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        ticket = json.loads(response.read(16_384).decode("utf-8"))
+    upload_url = str(ticket.get("uploadUrl", ""))
+    download_url = str(ticket.get("downloadUrl", ""))
+    _stream_blob_put(upload_url, source)
+    return {
+        "name": source.name, "contentType": "video/mp4",
+        "size": source.stat().st_size, "downloadUrl": download_url,
+    }
 
 
 def _news_task_message(text: str) -> str:
@@ -363,6 +491,17 @@ def _capture_x1_snapshot(view: str = "head") -> tuple[dict[str, Any], str]:
 
 def _run_agent(task_id: str, text: str, callback_url: str) -> None:
     try:
+        download_match = VIDEO_DOWNLOAD_RE.search(text)
+        if download_match:
+            video = _completed_project_video(download_match.group(1).lower())
+            remote_artifact = _upload_video_artifact(callback_url, task_id, video)
+            _callback(callback_url, {
+                "taskId": task_id,
+                "status": "completed",
+                "text": f"影片專案 {download_match.group(1)} 已可下載。",
+                "remoteArtifact": remote_artifact,
+            })
+            return
         if X1_CAMERA_SNAPSHOT_RE.search(text) and not X1_LOCATE_REQUEST_RE.search(text):
             captures = [_capture_x1_snapshot(view) for view in _requested_x1_camera_views(text)]
             _callback(callback_url, {
@@ -423,12 +562,7 @@ def _run_agent(task_id: str, text: str, callback_url: str) -> None:
                 "--session-key", session_key, "--timeout", "1800", "--json",
                 timeout=1860,
             )
-        visible = str(
-            ((result.get("result") or {}).get("meta") or {}).get("finalAssistantVisibleText")
-            or (result.get("result") or {}).get("text")
-            or result.get("text")
-            or "任務已完成，但沒有文字輸出。"
-        )[:30000]
+        visible = _openclaw_visible_text(result)[:30000]
         artifact, visible = _extract_artifact(visible)
         image_urls, visible = _extract_remote_images(visible)
         payload: dict[str, Any] = {
@@ -438,6 +572,12 @@ def _run_agent(task_id: str, text: str, callback_url: str) -> None:
             payload["artifact"] = artifact
         if image_urls:
             payload["imageUrls"] = image_urls
+        render_match = VIDEO_RENDER_RE.search(text)
+        if render_match:
+            video = _completed_project_video(render_match.group(1).lower())
+            payload["remoteArtifact"] = _upload_video_artifact(
+                callback_url, task_id, video
+            )
         digest = _parse_news_digest(visible)
         snapshot = _parse_market_snapshot(visible)
         if snapshot:

@@ -1,0 +1,27 @@
+{
+  "project": "Tianque smoke test",
+  "character_bible": {
+    "Tommy": "A 38-year-old East Asian man with short black hair, a clean-shaven face, a charcoal modern shirt, black trousers, and a confused but alert expression.",
+    "Empress Shen Wanrong": "A 30-year-old East Asian empress with an oval face, long black hair pinned by a gold phoenix hairpiece, and a restrained crimson-and-gold Zhou dynasty silk robe."
+  },
+  "style_bible": "Grounded historical fantasy, cinematic realism, deep crimson and warm gold against cool blue rain, natural skin, restrained acting, no subtitles.",
+  "reference_images": [
+    "Tommy and Empress Shen full-body front and side character sheet",
+    "Great Zhou imperial bedchamber at midnight in rain",
+    "Black phoenix token prop sheet"
+  ],
+  "shots": [
+    {
+      "id": "shot-01",
+      "duration_seconds": 8,
+      "who": "Tommy and Empress Shen Wanrong, matching the character bible exactly.",
+      "where": "A Great Zhou imperial bedchamber at midnight, warm swaying palace lamps, crimson gauze curtains, cool rain outside.",
+      "action": "The empress slowly reaches out and touches Tommy's cheek while he opens his eyes in confusion.",
+      "camera": "Intimate medium close-up, 50mm lens, one slow push-in, no cuts.",
+      "audio": "Steady rain on glazed roof tiles, faint low strings, the empress whispers one Mandarin line.",
+      "dialogue": "你可還會記得我",
+      "end_frame": "Tommy is awake, their joined hands centered below their faces, crimson curtain drifting at frame right.",
+      "prompt": "8-second single continuous cinematic shot. CHARACTER CONTINUITY: Tommy is a 38-year-old East Asian man with short black hair, a clean-shaven face, a charcoal modern shirt, black trousers, and a confused but alert expression. Empress Shen Wanrong is a 30-year-old East Asian empress with an oval face, long black hair pinned by a gold phoenix hairpiece, and a restrained crimson-and-gold Zhou dynasty silk robe. SCENE: A Great Zhou imperial bedchamber at midnight, warm swaying palace lamps, crimson gauze curtains, cool rain outside. VISIBLE ACTION: The empress slowly reaches out and touches Tommy's cheek while he opens his eyes in confusion. CAMERA: Intimate medium close-up, 50mm lens, one slow push-in, no cuts. AUDIO: Steady rain on glazed roof tiles, faint low strings. She softly says in Mandarin: 你可還會記得我. END FRAME: Tommy is awake, their joined hands centered below their faces, crimson curtain drifting at frame right. STYLE CONTINUITY: Grounded historical fantasy, cinematic realism, deep crimson and warm gold against cool blue rain, natural skin, restrained acting, no subtitles."
+    }
+  ]
+}
