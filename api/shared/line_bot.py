@@ -1086,6 +1086,33 @@ def push_artifact(
     )
 
 
+def push_images(
+    target_id: str, task_id: str, images: list[tuple[str, str]], summary: str,
+    access_token: str,
+) -> None:
+    """Push one summary plus up to four normalized LINE image messages."""
+    if not target_id or not 1 <= len(images) <= 4:
+        raise ValueError("invalid LINE image push")
+    messages: list[dict[str, Any]] = [{
+        "type": "text",
+        "text": (str(summary or "").strip() or f"找到 {len(images)} 張圖片。")[:5000],
+    }]
+    for original_url, preview_url in images:
+        if not original_url.startswith("https://") or not preview_url.startswith("https://"):
+            raise ValueError("LINE image URLs must use HTTPS")
+        messages.append({
+            "type": "image",
+            "originalContentUrl": original_url,
+            "previewImageUrl": preview_url,
+        })
+    _send_messages(
+        LINE_PUSH_URL,
+        {"to": target_id, "messages": messages},
+        access_token,
+        retry_key=task_id,
+    )
+
+
 def push_text(
     target_id: str, text: str, access_token: str, *, retry_key: str = ""
 ) -> None:

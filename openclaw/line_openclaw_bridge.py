@@ -39,6 +39,9 @@ WORKSPACE_DIR = Path(
 MEDIA_RE = re.compile(
     r"MEDIA:\s*((?:/|[A-Za-z]:[\\/])[^\r\n)]+)", re.IGNORECASE
 )
+REMOTE_MEDIA_RE = re.compile(
+    r"MEDIA:\s*(https://[^\s<>)]+)", re.IGNORECASE
+)
 ALLOWED_ARTIFACT_SUFFIXES = {
     ".csv", ".css", ".html", ".js", ".json", ".md", ".pdf", ".ps1",
     ".py", ".sh", ".ts", ".txt", ".yaml", ".yml", ".zip",
@@ -234,6 +237,22 @@ def _extract_artifact(text: str) -> tuple[dict[str, Any] | None, str]:
         return None, cleaned + "\n\n檔案已產生，但無法安全附加到 LINE。"
 
 
+def _extract_remote_images(text: str) -> tuple[list[str], str]:
+    """Extract up to four HTTPS MEDIA URLs for Azure-side image normalization."""
+    urls: list[str] = []
+    for match in REMOTE_MEDIA_RE.finditer(text):
+        candidate = match.group(1).rstrip(".,;:!?，。；：！？]}")
+        if candidate not in urls:
+            urls.append(candidate)
+        if len(urls) == 4:
+            break
+    if not urls:
+        return [], text
+    cleaned = REMOTE_MEDIA_RE.sub("", text).replace("()", "").strip()
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return urls, cleaned
+
+
 def _run_agent(task_id: str, text: str, callback_url: str) -> None:
     try:
         market_chart_requested = bool(MARKET_CHART_RE.search(text))
@@ -257,11 +276,14 @@ def _run_agent(task_id: str, text: str, callback_url: str) -> None:
             or "任務已完成，但沒有文字輸出。"
         )[:30000]
         artifact, visible = _extract_artifact(visible)
+        image_urls, visible = _extract_remote_images(visible)
         payload: dict[str, Any] = {
             "taskId": task_id, "status": "completed", "text": visible[:5000]
         }
         if artifact:
             payload["artifact"] = artifact
+        if image_urls:
+            payload["imageUrls"] = image_urls
         digest = _parse_news_digest(visible)
         snapshot = _parse_market_snapshot(visible)
         if snapshot:
