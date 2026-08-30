@@ -9,8 +9,9 @@ import json
 import logging
 import os
 import uuid
-from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from datetime import datetime
 from urllib.parse import parse_qs
+from zoneinfo import ZoneInfo
 
 import azure.functions as func
 
@@ -19,7 +20,6 @@ from shared import line_bot
 from shared import inference_hub
 from shared import pdf_summary
 from shared import reminders
-from shared import daily_briefing
 from shared import line_openclaw
 from shared import news_digest
 from shared import market_snapshot
@@ -30,39 +30,40 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 MAX_BODY_BYTES = 1_000_000
 # Browsers assume UTF-8 for JSON, but other clients fall back to ISO-8859-1 without this.
 JSON_CONTENT_TYPE = "application/json; charset=utf-8"
-DAILY_BRIEFING_EXECUTOR = ThreadPoolExecutor(max_workers=2)
+TAIPEI = ZoneInfo("Asia/Taipei")
+DAILY_OPENCLAW_PROMPT = (
+    "請製作今天的 RocketAI 每日情報並推送給主人。第一則必須是新北市板橋區今日天氣預報，"
+    "請用 web_fetch 讀取 Open-Meteo 今日預報 JSON："
+    "https://api.open-meteo.com/v1/forecast?latitude=25.0143&longitude=121.4672&"
+    "daily=weather_code,temperature_2m_max,temperature_2m_min,"
+    "precipitation_probability_max,precipitation_sum&timezone=Asia%2FTaipei&forecast_days=1；"
+    "摘要需包含天氣、最高／最低溫、最高降雨機率與預估雨量。"
+    "其餘最多四則整理過去 24 小時 NVIDIA、AI 新技術與機器人相關新聞。"
+    "新聞必須使用 verified-news-digest 流程：Tavily 搜尋候選、web_fetch 打開重要原始來源、"
+    "交叉整理並附實際來源連結；標示官方確認、多方報導、單一來源或未獲證實。"
+    "輸出適合 LINE Flex Carousel 的 verified_news_digest JSON。"
+)
 
 
-def _start_daily_briefing(source: dict, message_type: str) -> Future | None:
-    """Start the owner's daily briefing or a non-owner's one-time welcome."""
+def _welcome_for_message(source: dict, message_type: str) -> str:
+    """Return only a non-owner's one-time welcome; chat never triggers a briefing."""
     user_id = str(source.get("userId", "")).strip()
     if message_type != "text" or not user_id or line_bot.is_group_source(source):
-        return None
+        return ""
     if inference_hub.is_line_owner(user_id):
-        return DAILY_BRIEFING_EXECUTOR.submit(daily_briefing.for_first_message, user_id)
-
-    def new_user_welcome() -> str:
-        return line_bot.welcome_message() if store.claim_line_welcome(user_id) else ""
-
-    return DAILY_BRIEFING_EXECUTOR.submit(new_user_welcome)
+        return ""
+    return line_bot.welcome_message() if store.claim_line_welcome(user_id) else ""
 
 
-def _reply_with_daily_briefing(
+def _reply_with_welcome(
     reply_token: str,
     text: str,
     access_token: str,
-    briefing_future: Future | None,
+    welcome: str,
 ) -> None:
     messages = [text]
-    if briefing_future is not None:
-        try:
-            briefing = str(briefing_future.result(timeout=35) or "").strip()
-            if briefing:
-                messages.append(briefing)
-        except FutureTimeoutError:
-            logging.warning("Daily briefing exceeded LINE reply wait budget")
-        except Exception:
-            logging.exception("Daily briefing failed; sending normal reply only")
+    if welcome.strip():
+        messages.append(welcome.strip())
     line_bot.reply_texts(reply_token, messages, access_token)
 
 
@@ -272,11 +273,11 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                     continue
                 if message_type == "text" and line_bot.is_explicit_bot_wake(message):
                     incoming_text = line_bot.strip_bot_wake_text(message)
-            briefing_future = _start_daily_briefing(source, message_type)
+            welcome = _welcome_for_message(source, message_type)
             if message_type == "text" and line_bot.is_memory_reset(incoming_text):
                 store.clear_line_memory(conversation_id)
-                _reply_with_daily_briefing(
-                    reply_token, "已清除這個對話最近的記憶。", access_token, briefing_future
+                _reply_with_welcome(
+                    reply_token, "已清除這個對話最近的記憶。", access_token, welcome
                 )
                 continue
             openclaw_command = (
@@ -307,7 +308,7 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                 except Exception:
                     logging.exception("LINE OpenClaw command failed")
                     text = "OpenClaw 目前無法接受任務，請稍後再試。"
-                _reply_with_daily_briefing(reply_token, text, access_token, briefing_future)
+                _reply_with_welcome(reply_token, text, access_token, welcome)
                 continue
             try:
                 line_bot.show_loading_animation(source, access_token, loading_seconds=25)
@@ -323,8 +324,8 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                 except (ValueError, RuntimeError) as exc:
                     logging.warning("LINE reminder command rejected: %s", exc)
                     text = "提醒內容、時間或 OpenClaw 排程服務暫時無效，請稍後再試。"
-                _reply_with_daily_briefing(
-                    reply_token, text, access_token, briefing_future
+                _reply_with_welcome(
+                    reply_token, text, access_token, welcome
                 )
                 try:
                     store.add_line_memory(conversation_id, "user", incoming_text)
@@ -411,8 +412,8 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                             )
                         continue
                 text = "請傳送要修改的圖片；收到後小羽會依照這項要求處理。"
-                _reply_with_daily_briefing(
-                    reply_token, text, access_token, briefing_future
+                _reply_with_welcome(
+                    reply_token, text, access_token, welcome
                 )
                 try:
                     store.add_line_memory(
@@ -452,8 +453,8 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                     incoming_text = line_bot.recent_image_question_prompt(incoming_text)
                 else:
                     text = "最近一張圖片已不存在或超過 24 小時，請重新傳送圖片。"
-                    _reply_with_daily_briefing(
-                        reply_token, text, access_token, briefing_future
+                    _reply_with_welcome(
+                        reply_token, text, access_token, welcome
                     )
                     try:
                         store.add_line_memory(conversation_id, "user", memory_text)
@@ -517,8 +518,8 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                 history=history,
                 image_data_url=image_data_url,
             )
-            _reply_with_daily_briefing(
-                reply_token, text, access_token, briefing_future
+            _reply_with_welcome(
+                reply_token, text, access_token, welcome
             )
             try:
                 store.add_line_memory(conversation_id, "user", memory_text)
@@ -671,6 +672,42 @@ def line_openclaw_callback(req: func.HttpRequest) -> func.HttpResponse:
     except Exception:
         logging.exception("LINE OpenClaw completion callback failed")
         return json_response({"error": "callback failed"}, 502)
+
+
+@app.route(route="line-openclaw-daily-dispatch", methods=["POST"])
+def line_openclaw_daily_dispatch(req: func.HttpRequest) -> func.HttpResponse:
+    """Create one owner-only OpenClaw weather/news task from the cam cron job."""
+    supplied = req.headers.get("x-line-openclaw-token", "").strip()
+    if not inference_hub.openclaw_callback_token_matches(supplied):
+        return json_response({"error": "unauthorized"}, 401)
+    try:
+        body = read_body(req)
+        if body.get("kind") != "daily-briefing":
+            return json_response({"error": "invalid kind"}, 400)
+        owner_id = inference_hub._setting("LINE_OWNER_USER_ID").strip()
+        if not owner_id or not line_openclaw.configured():
+            return json_response({"error": "daily dispatch is not configured"}, 503)
+        scheduled_date = str(body.get("scheduledDate", "")).strip()
+        if not scheduled_date:
+            scheduled_date = datetime.now(TAIPEI).date().isoformat()
+        try:
+            datetime.strptime(scheduled_date, "%Y-%m-%d")
+        except ValueError:
+            return json_response({"error": "invalid scheduled date"}, 400)
+        task_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"rocketai-owner-daily:{scheduled_date}"))
+        existing = store.get_line_openclaw_task(task_id)
+        if existing:
+            return json_response({
+                "ok": True, "taskId": task_id,
+                "status": str(existing.get("status", "accepted")), "duplicate": True,
+            })
+        prompt = f"排程日期：{scheduled_date}（Asia/Taipei）。\n\n{DAILY_OPENCLAW_PROMPT}"
+        store.create_line_openclaw_task(task_id, owner_id, prompt)
+        line_openclaw.submit_task(owner_id, prompt, task_id=task_id)
+        return json_response({"ok": True, "taskId": task_id, "status": "accepted"}, 202)
+    except Exception:
+        logging.exception("Scheduled OpenClaw daily briefing dispatch failed")
+        return json_response({"error": "daily dispatch failed"}, 502)
 
 
 @app.route(route="line-inference-smoke", methods=["POST"])
