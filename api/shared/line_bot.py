@@ -932,6 +932,37 @@ def reply_messages(reply_token: str, messages: list[dict[str, Any]], access_toke
     _send_messages(LINE_REPLY_URL, {"replyToken": reply_token, "messages": messages}, access_token)
 
 
+def robot_pose_quick_reply(
+    robot: str, poses: tuple[dict[str, Any], ...], *, text: str = ""
+) -> dict[str, Any]:
+    """Build a bounded LINE Quick Reply using opaque, server-validated pose IDs."""
+    if robot != "x1" or not 1 <= len(poses) <= 13:
+        raise ValueError("invalid robot pose list")
+    items = []
+    for pose in poses:
+        pose_id = str(pose.get("id", ""))
+        label = str(pose.get("label", pose_id))
+        if not re.fullmatch(r"[a-z0-9-]{1,32}", pose_id) or not 1 <= len(label) <= 20:
+            raise ValueError("invalid robot pose")
+        data = f"action=robot_pose&robot={robot}&pose={pose_id}"
+        if pose.get("previewOnly"):
+            data += "&preview=1"
+        items.append({
+            "type": "action",
+            "action": {
+                "type": "postback",
+                "label": label,
+                "data": data,
+                "displayText": f"X1 播放 {pose_id}",
+            },
+        })
+    return {
+        "type": "text",
+        "text": text or "請選擇 X1 動作。播放前請確認機器人周圍淨空。",
+        "quickReply": {"items": items},
+    }
+
+
 def _send_messages(
     url: str, value: dict[str, Any], access_token: str, *, retry_key: str = ""
 ) -> None:

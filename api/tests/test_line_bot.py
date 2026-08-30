@@ -16,6 +16,7 @@ from PIL import Image
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from shared import line_bot
+from shared import line_openclaw
 from shared import inference_hub
 from shared import store
 from shared import pdf_summary
@@ -42,6 +43,15 @@ STATE = {
 
 
 class LineBotAnswerTests(unittest.TestCase):
+    def test_x1_pose_quick_reply_has_thirteen_scoped_postbacks(self):
+        message = line_bot.robot_pose_quick_reply("x1", line_openclaw.X1_POSES)
+
+        items = message["quickReply"]["items"]
+        self.assertEqual(13, len(items))
+        self.assertIn("robot=x1", items[0]["action"]["data"])
+        self.assertIn("pose=away", items[0]["action"]["data"])
+        self.assertTrue(all(item["action"]["type"] == "postback" for item in items))
+
     @mock.patch("shared.store._table")
     def test_daily_briefing_claim_is_once_per_user_and_date(self, table_factory):
         table = mock.MagicMock()

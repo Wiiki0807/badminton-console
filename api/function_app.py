@@ -207,8 +207,34 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                 source = event.get("source") or {}
                 values = parse_qs(str((event.get("postback") or {}).get("data", "")))
                 action = values.get("action", [""])[0]
-                task_id = str(uuid.UUID(values.get("task", [""])[0]))
                 user_id = str(source.get("userId", ""))
+                if action == "robot_pose":
+                    robot = values.get("robot", [""])[0].lower()
+                    gesture = values.get("pose", [""])[0].lower()
+                    pose = line_openclaw.X1_POSE_BY_ID.get(gesture)
+                    if not inference_hub.is_line_owner(user_id):
+                        text = "這個 X1 動作控制只允許已設定的主人使用。"
+                    elif robot != "x1" or not pose:
+                        text = "這個機器人或動作不在允許清單中。"
+                    else:
+                        preview = values.get("preview", [""])[0] == "1"
+                        result = line_openclaw.robot_command(
+                            user_id, "play", gesture, robot=robot, preview=preview
+                        )
+                        mode = "Isaac 預覽" if preview else "實機"
+                        text = (
+                            f"▶️ X1 已接受動作：{gesture}（{mode}）。"
+                            if result.get("ok") else f"X1 無法播放動作：{gesture}。"
+                        )
+                    line_bot.reply_messages(
+                        reply_token,
+                        [line_bot.robot_pose_quick_reply(
+                            "x1", line_openclaw.X1_POSES, text=text
+                        )],
+                        access_token,
+                    )
+                    continue
+                task_id = str(uuid.UUID(values.get("task", [""])[0]))
                 if action == "news_detail":
                     item_index = int(values.get("item", ["-1"])[0])
                     item = store.get_line_openclaw_news_item(task_id, user_id, item_index)
@@ -289,12 +315,21 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                 user_id = str(source.get("userId", ""))
                 if not inference_hub.is_line_owner(user_id):
                     text = "這個 X1 動作控制只允許已設定的主人使用。"
+                elif robot_command["action"] == "list":
+                    line_bot.reply_messages(
+                        reply_token,
+                        [line_bot.robot_pose_quick_reply("x1", line_openclaw.X1_POSES)],
+                        access_token,
+                    )
+                    continue
                 else:
                     try:
                         result = line_openclaw.robot_command(
                             user_id,
                             robot_command["action"],
                             robot_command.get("gesture", ""),
+                            robot=robot_command["robot"],
+                            preview=robot_command.get("preview") == "true",
                         )
                         action = robot_command["action"]
                         if action == "status":
@@ -313,8 +348,13 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                             text = "⏹️ X1 動作已停止。" if result.get("ok") else "X1 動作停止失敗。"
                         else:
                             gesture = robot_command.get("gesture", "")
+                            mode = (
+                                "Isaac 預覽"
+                                if robot_command.get("preview") == "true"
+                                else "實機"
+                            )
                             text = (
-                                f"▶️ X1 已接受動作：{gesture}。"
+                                f"▶️ X1 已接受動作：{gesture}（{mode}）。"
                                 if result.get("ok")
                                 else f"X1 無法播放動作：{gesture}。"
                             )

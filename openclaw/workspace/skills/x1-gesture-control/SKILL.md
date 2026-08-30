@@ -9,7 +9,9 @@ metadata: { "openclaw": { "emoji": "🤖" } }
 Use only `/home/tommywu/.openclaw/x1_gesture_control.py`. Never call ROS2 topics,
 `laban_ctl.py`, `run_player.sh`, the Unix socket, or arbitrary gesture files directly.
 
-Allowed gestures are `away`, `away2`, and `thanks`. Never invent another name.
+Allowed gestures are `away`, `away2`, `good`, `happy`, `hello`, `come`, `bad`,
+`thanks`, `goodbye`, `nice`, `surprised`, `wave-happily`, and `open-two-arms`.
+Never invent another name.
 Run status before a motion workflow. Real motion is allowed only when the paired
 owner explicitly requests the physical X1 robot; otherwise use preview mode.
 

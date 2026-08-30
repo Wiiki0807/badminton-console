@@ -15,7 +15,9 @@ class NewsBridgeTests(unittest.TestCase):
             returncode=0, stdout=json.dumps({"ok": True}), stderr=""
         )
 
-        result = bridge._x1_robot_command({"action": "play", "gesture": "thanks"})
+        result = bridge._x1_robot_command({
+            "robot": "x1", "action": "play", "gesture": "thanks"
+        })
 
         self.assertTrue(result["ok"])
         command = run.call_args.args[0]
@@ -24,7 +26,25 @@ class NewsBridgeTests(unittest.TestCase):
 
     def test_x1_direct_play_rejects_unknown_gesture(self):
         with self.assertRaisesRegex(ValueError, "allow-listed"):
-            bridge._x1_robot_command({"action": "play", "gesture": "dance"})
+            bridge._x1_robot_command({
+                "robot": "x1", "action": "play", "gesture": "dance"
+            })
+
+    def test_x1_direct_command_requires_robot_name(self):
+        with self.assertRaisesRegex(ValueError, "unsupported robot"):
+            bridge._x1_robot_command({"action": "status"})
+
+    @mock.patch("line_openclaw_bridge.subprocess.run")
+    def test_x1_preview_omits_real_flag(self, run):
+        run.return_value = mock.Mock(
+            returncode=0, stdout=json.dumps({"ok": True}), stderr=""
+        )
+
+        bridge._x1_robot_command({
+            "robot": "x1", "action": "play", "gesture": "bad", "preview": True
+        })
+
+        self.assertEqual(["play", "bad"], run.call_args.args[0][-2:])
 
     def test_news_request_gets_structured_contract(self):
         result = bridge._news_task_message("整理機器人近期新聞")
