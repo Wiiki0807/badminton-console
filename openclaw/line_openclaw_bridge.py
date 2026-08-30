@@ -36,6 +36,8 @@ MAX_ARTIFACT_BYTES = 512 * 1024
 WORKSPACE_DIR = Path(
     os.environ.get("OPENCLAW_WORKSPACE_DIR", str(STATE_DIR / "workspace"))
 )
+X1_GESTURE_CONTROL = STATE_DIR / "x1_gesture_control.py"
+SAFE_X1_GESTURES = {"away", "away2", "thanks"}
 MEDIA_RE = re.compile(
     r"MEDIA:\s*((?:/|[A-Za-z]:[\\/])[^\r\n)]+)", re.IGNORECASE
 )
@@ -139,6 +141,36 @@ def _pair(user_id: str, code: str) -> bool:
     OWNER_FILE.write_text(json.dumps({"userId": user_id}), encoding="utf-8")
     OWNER_FILE.chmod(0o600)
     return True
+
+
+def _x1_robot_command(body: dict[str, Any]) -> dict[str, Any]:
+    """Execute one bounded direct LINE command through the shared X1 controller."""
+    action = str(body.get("action", "")).lower()
+    if action not in {"status", "play", "stop"}:
+        raise ValueError("invalid robot action")
+    command = ["/usr/bin/python3", str(X1_GESTURE_CONTROL), action]
+    if action == "play":
+        gesture = str(body.get("gesture", "")).lower()
+        if gesture not in SAFE_X1_GESTURES:
+            raise ValueError("gesture is not allow-listed")
+        command.extend([gesture, "--real"])
+    completed = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env=os.environ.copy(),
+    )
+    try:
+        value = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("X1 controller returned invalid JSON") from exc
+    if not isinstance(value, dict):
+        raise RuntimeError("X1 controller returned an invalid response")
+    if completed.returncode or not value.get("ok"):
+        raise RuntimeError(str(value.get("error") or "X1 command failed"))
+    return value
 
 
 def _callback(url: str, payload: dict[str, Any]) -> None:
@@ -261,6 +293,20 @@ def _run_agent(task_id: str, text: str, callback_url: str) -> None:
                 "安全約束：只可呼叫 exec，且 command 必須完全是 "
                 "'/home/tommywu/.openclaw/robot_control.py status'；"
                 "不可使用 find、grep、cat、shell 組合或其他命令。執行後依使用者要求回覆。\n\n"
+                f"使用者要求：{text}"
+            )
+        elif re.search(
+            r"(?:(?:X1|機器人).{0,24}(?:手勢|動作|away|thanks)|"
+            r"(?:away2?|thanks).{0,24}(?:手勢|動作|X1|機器人))",
+            text,
+            re.IGNORECASE,
+        ):
+            text = (
+                "X1 安全約束：使用 x1-gesture-control skill；只可透過 exec 直接呼叫 "
+                "/home/tommywu/.openclaw/x1_gesture_control.py。不得直接操作 ROS2、"
+                "Unix socket、laban_ctl.py 或任意 gesture 檔。先查 status；除非使用者明確說"
+                "實機／真機／physical，否則只能 Isaac 預覽。只允許 away、away2、thanks，"
+                "最多五步，收到停止要求必須立刻 stop。\n\n"
                 f"使用者要求：{text}"
             )
         text = _news_task_message(text)
@@ -411,13 +457,20 @@ class Handler(BaseHTTPRequestHandler):
                 thread.start()
                 self._json(202, {"ok": True, "taskId": task_id, "status": "accepted"})
                 return
+            if self.path == "/v1/robot":
+                user_id = str(body.get("userId", ""))
+                if not _owner_id() or not hmac.compare_digest(user_id, _owner_id()):
+                    self._json(403, {"error": "owner only"})
+                    return
+                self._json(200, _x1_robot_command(body))
+                return
             if self.path == "/v1/reminders":
                 self._json(200, schedule_reminder(body))
                 return
             self._json(404, {"error": "not found"})
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             self._json(400, {"error": str(exc)})
-        except (subprocess.SubprocessError, OSError, urllib.error.URLError):
+        except (RuntimeError, subprocess.SubprocessError, OSError, urllib.error.URLError):
             logging.exception("Bridge request failed path=%s", self.path)
             self._json(502, {"error": "OpenClaw unavailable"})
 
