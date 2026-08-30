@@ -31,7 +31,7 @@ class LineRobotRichMenuTests(unittest.TestCase):
     def test_pose_catalog_uses_large_swipeable_cards(self):
         from shared import line_bot, line_openclaw
 
-        message = line_bot.robot_pose_catalog("x1", line_openclaw.X1_POSES)
+        message = line_bot.robot_pose_catalog("x1", line_openclaw.X1_ALL_POSES)
         bubbles = message["contents"]["contents"]
         self.assertEqual("flex", message["type"])
         self.assertEqual(3, len(bubbles))
@@ -39,7 +39,7 @@ class LineRobotRichMenuTests(unittest.TestCase):
             cell for bubble in bubbles for row in bubble["body"]["contents"]
             for cell in row["contents"] if cell.get("action")
         ]
-        self.assertEqual(13, len(cells))
+        self.assertEqual(16, len(cells))
         self.assertTrue(all("preview=0" in item["action"]["data"] for item in cells))
         self.assertTrue(all("confirmed=1" not in item["action"]["data"] for item in cells))
 

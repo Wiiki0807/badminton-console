@@ -255,7 +255,7 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                     elif command == "list":
                         line_bot.reply_messages(
                             reply_token,
-                            [line_bot.robot_pose_catalog("x1", line_openclaw.X1_POSES)],
+                            [line_bot.robot_pose_catalog("x1", line_openclaw.X1_ALL_POSES)],
                             access_token,
                         )
                         continue
@@ -268,6 +268,8 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                         text = (
                             "X1 實機控制說明\n"
                             "• 點選 pose 後還要再次確認才會移動。\n"
+                            "• 一般 pose 會依 Laban 同步頭部。\n"
+                            "• nod／shake-head／look-at 只控制頭部。\n"
                             "• 執行前請確認機器人周圍淨空。\n"
                             "• 發現異常請立即按「停止」。\n"
                             "• 此選單只連結給已設定的主人。"
@@ -372,7 +374,7 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                 elif robot_command["action"] == "list":
                     line_bot.reply_messages(
                         reply_token,
-                        [line_bot.robot_pose_quick_reply("x1", line_openclaw.X1_POSES)],
+                        [line_bot.robot_pose_catalog("x1", line_openclaw.X1_ALL_POSES)],
                         access_token,
                     )
                     continue
