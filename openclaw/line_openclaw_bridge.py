@@ -37,7 +37,10 @@ WORKSPACE_DIR = Path(
     os.environ.get("OPENCLAW_WORKSPACE_DIR", str(STATE_DIR / "workspace"))
 )
 X1_GESTURE_CONTROL = STATE_DIR / "x1_gesture_control.py"
-SAFE_X1_GESTURES = {"away", "away2", "thanks"}
+SAFE_X1_GESTURES = {
+    "away", "away2", "good", "happy", "hello", "come", "bad", "thanks",
+    "goodbye", "nice", "surprised", "wave-happily", "open-two-arms",
+}
 MEDIA_RE = re.compile(
     r"MEDIA:\s*((?:/|[A-Za-z]:[\\/])[^\r\n)]+)", re.IGNORECASE
 )
@@ -146,6 +149,9 @@ def _pair(user_id: str, code: str) -> bool:
 def _x1_robot_command(body: dict[str, Any]) -> dict[str, Any]:
     """Execute one bounded direct LINE command through the shared X1 controller."""
     action = str(body.get("action", "")).lower()
+    robot = str(body.get("robot", "")).lower()
+    if robot != "x1":
+        raise ValueError("unsupported robot")
     if action not in {"status", "play", "stop"}:
         raise ValueError("invalid robot action")
     command = ["/usr/bin/python3", str(X1_GESTURE_CONTROL), action]
@@ -153,7 +159,9 @@ def _x1_robot_command(body: dict[str, Any]) -> dict[str, Any]:
         gesture = str(body.get("gesture", "")).lower()
         if gesture not in SAFE_X1_GESTURES:
             raise ValueError("gesture is not allow-listed")
-        command.extend([gesture, "--real"])
+        command.append(gesture)
+        if not bool(body.get("preview")):
+            command.append("--real")
     completed = subprocess.run(
         command,
         check=False,
@@ -305,8 +313,9 @@ def _run_agent(task_id: str, text: str, callback_url: str) -> None:
                 "X1 安全約束：使用 x1-gesture-control skill；只可透過 exec 直接呼叫 "
                 "/home/tommywu/.openclaw/x1_gesture_control.py。不得直接操作 ROS2、"
                 "Unix socket、laban_ctl.py 或任意 gesture 檔。先查 status；除非使用者明確說"
-                "實機／真機／physical，否則只能 Isaac 預覽。只允許 away、away2、thanks，"
-                "最多五步，收到停止要求必須立刻 stop。\n\n"
+                "實機／真機／physical，否則只能 Isaac 預覽。只允許 "
+                "x1-gesture-control skill 文件列出的 gesture，最多五步，"
+                "收到停止要求必須立刻 stop。\n\n"
                 f"使用者要求：{text}"
             )
         text = _news_task_message(text)

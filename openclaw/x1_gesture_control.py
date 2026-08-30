@@ -22,7 +22,22 @@ CONTROL_STATE_DIR = Path(
     os.environ.get("OPENCLAW_STATE_DIR", str(Path.home() / ".openclaw"))
 ) / "state"
 EPOCH_FILE = CONTROL_STATE_DIR / "x1_laban_control_epoch"
-SAFE_GESTURES = {"away", "away2", "thanks"}
+GESTURE_FILES = {
+    "away": "away",
+    "away2": "away2",
+    "good": "good",
+    "happy": "happy4",
+    "hello": "hello",
+    "come": "come",
+    "bad": "bad",
+    "thanks": "thanks",
+    "goodbye": "goodbye",
+    "nice": "nice",
+    "surprised": "surprised",
+    "wave-happily": "wave happily",
+    "open-two-arms": "open two arms",
+}
+SAFE_GESTURES = frozenset(GESTURE_FILES)
 MAX_SEQUENCE_STEPS = 5
 
 
@@ -41,7 +56,7 @@ def _request(payload: dict[str, Any], timeout: float = 10.0) -> dict[str, Any]:
 def _gesture_path(name: str) -> Path:
     if name not in SAFE_GESTURES:
         raise ValueError(f"gesture is not allow-listed: {name}")
-    path = (LIBRARY / f"{name}.json").resolve()
+    path = (LIBRARY / f"{GESTURE_FILES[name]}.json").resolve()
     if path.parent != LIBRARY or not path.is_file():
         raise ValueError(f"gesture is unavailable: {name}")
     return path
