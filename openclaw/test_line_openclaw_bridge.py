@@ -145,16 +145,18 @@ class NewsBridgeTests(unittest.TestCase):
         )
         extract.return_value = ({"name": "x1-head.jpg"}, "")
 
-        artifact, caption = bridge._capture_x1_head_snapshot()
+        artifact, caption = bridge._capture_x1_snapshot("head")
 
         self.assertEqual("x1-head.jpg", artifact["name"])
         self.assertIn("640×480", caption)
-        self.assertEqual("snapshot", run.call_args.args[0][-1])
+        self.assertEqual(["snapshot", "--view", "head"], run.call_args.args[0][-3:])
 
     def test_x1_camera_photo_request_is_detected(self):
         self.assertIsNotNone(
             bridge.X1_CAMERA_SNAPSHOT_RE.search("請將 X1 機器人頭部視角的照片拍給我")
         )
+        self.assertEqual("left-hand", bridge._requested_x1_camera_view("拍 X1 左手相機照片"))
+        self.assertEqual("right-hand", bridge._requested_x1_camera_view("拍 X1 右臂 camera snapshot"))
 
     def test_rejects_sensitive_workspace_artifact(self):
         with tempfile.TemporaryDirectory() as directory:
