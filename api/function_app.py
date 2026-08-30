@@ -250,13 +250,18 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                     command = values.get("command", [""])[0].lower()
                     if not inference_hub.is_line_owner(user_id):
                         text = "這個 X1 動作控制只允許已設定的主人使用。"
-                    elif robot != "x1" or command not in {"status", "stop", "list", "help"}:
+                    elif robot != "x1" or command not in {"status", "stop", "list", "help", "robots"}:
                         text = "這個機器人控制指令不在允許清單中。"
                     elif command == "list":
                         line_bot.reply_messages(
                             reply_token,
-                            [line_bot.robot_pose_quick_reply("x1", line_openclaw.X1_POSES)],
+                            [line_bot.robot_pose_catalog("x1", line_openclaw.X1_POSES)],
                             access_token,
+                        )
+                        continue
+                    elif command == "robots":
+                        line_bot.reply_messages(
+                            reply_token, [line_bot.robot_selector_flex()], access_token
                         )
                         continue
                     elif command == "help":

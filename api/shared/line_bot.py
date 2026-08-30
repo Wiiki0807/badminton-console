@@ -994,6 +994,116 @@ def robot_pose_confirmation(robot: str, pose: str) -> dict[str, Any]:
     }
 
 
+def robot_pose_catalog(robot: str, poses: tuple[dict[str, Any], ...]) -> dict[str, Any]:
+    """Present physical poses as large, swipeable Flex cards instead of tiny menu cells."""
+    if robot != "x1" or not 1 <= len(poses) <= 20:
+        raise ValueError("invalid robot pose catalog")
+    validated: list[tuple[str, str]] = []
+    for pose in poses:
+        pose_id = str(pose.get("id", ""))
+        label = str(pose.get("label", pose_id))
+        if not re.fullmatch(r"[a-z0-9-]{1,32}", pose_id) or not 1 <= len(label) <= 20:
+            raise ValueError("invalid robot pose")
+        validated.append((pose_id, label))
+    groups = [validated[index:index + 6] for index in range(0, len(validated), 6)]
+    bubbles = []
+    for page, group in enumerate(groups, start=1):
+        cells = []
+        for pose_id, label in group:
+            cells.append({
+                "type": "box",
+                "layout": "vertical",
+                "height": "96px",
+                "backgroundColor": "#EAF4EA",
+                "cornerRadius": "12px",
+                "paddingAll": "12px",
+                "justifyContent": "center",
+                "action": {
+                    "type": "postback",
+                    "label": label,
+                    "data": f"action=robot_pose&robot={robot}&pose={pose_id}&preview=0",
+                    "displayText": f"X1 實機動作：{pose_id}",
+                },
+                "contents": [{
+                    "type": "text", "text": label, "weight": "bold", "size": "md",
+                    "color": "#163C1A", "align": "center", "wrap": True,
+                }],
+            })
+        rows = []
+        for index in range(0, 6, 2):
+            row_cells = cells[index:index + 2]
+            while len(row_cells) < 2:
+                row_cells.append({
+                    "type": "box", "layout": "vertical", "height": "96px",
+                    "backgroundColor": "#F5F7F5", "cornerRadius": "12px",
+                    "contents": [],
+                })
+            rows.append({
+                "type": "box", "layout": "horizontal", "spacing": "md",
+                "margin": "md" if rows else "none", "contents": row_cells,
+            })
+        bubbles.append({
+            "type": "bubble",
+            "size": "mega",
+            "header": {
+                "type": "box", "layout": "vertical", "backgroundColor": "#102712",
+                "paddingAll": "20px",
+                "contents": [
+                    {"type": "text", "text": "X1 實機動作", "weight": "bold",
+                     "size": "xl", "color": "#FFFFFF"},
+                    {"type": "text", "text": f"POSE {page} / {len(groups)}",
+                     "size": "xs", "color": "#9FCA9F", "margin": "sm"},
+                ],
+            },
+            "body": {
+                "type": "box", "layout": "vertical", "paddingAll": "18px",
+                "contents": rows,
+            },
+            "footer": {
+                "type": "box", "layout": "vertical", "paddingAll": "16px",
+                "contents": [{"type": "text", "text": "點選後仍需再次確認實機動作",
+                              "size": "xs", "color": "#777777", "wrap": True}],
+            },
+        })
+    return {
+        "type": "flex",
+        "altText": "X1 實機動作列表",
+        "contents": {"type": "carousel", "contents": bubbles},
+    }
+
+
+def robot_selector_flex() -> dict[str, Any]:
+    """Robot tab target; more robots can be added without changing the menu layout."""
+    return {
+        "type": "flex",
+        "altText": "選擇機器人",
+        "contents": {
+            "type": "bubble",
+            "size": "mega",
+            "header": {
+                "type": "box", "layout": "vertical", "backgroundColor": "#102712",
+                "paddingAll": "20px",
+                "contents": [{"type": "text", "text": "選擇機器人", "weight": "bold",
+                              "size": "xl", "color": "#FFFFFF"}],
+            },
+            "body": {
+                "type": "box", "layout": "vertical", "paddingAll": "20px",
+                "contents": [
+                    {"type": "text", "text": "目前已啟用", "size": "sm",
+                     "color": "#777777"},
+                    {"type": "button", "style": "primary", "height": "sm",
+                     "color": "#245B2A", "margin": "md",
+                     "action": {"type": "postback", "label": "X1 ROBOT",
+                                "data": "action=robot_control&robot=x1&command=help",
+                                "displayText": "切換到 X1 ROBOT"}},
+                    {"type": "text", "text": "新增其他 robot 後會顯示在這裡。",
+                     "size": "xs", "color": "#999999", "margin": "lg", "wrap": True},
+                ],
+            },
+        },
+    }
+
+
 def _send_messages(
     url: str, value: dict[str, Any], access_token: str, *, retry_key: str = ""
 ) -> None:

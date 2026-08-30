@@ -17,19 +17,31 @@ class LineRobotRichMenuTests(unittest.TestCase):
     def test_menu_has_owner_safe_physical_controls(self):
         payload = rich_menu.menu_payload()
         self.assertEqual({"width": 2500, "height": 1686}, payload["size"])
-        self.assertEqual(17, len(payload["areas"]))
-        pose_actions = [
-            area["action"]["data"] for area in payload["areas"]
-            if "action=robot_pose" in area["action"]["data"]
-        ]
-        self.assertEqual(13, len(pose_actions))
-        self.assertTrue(all("preview=0" in value for value in pose_actions))
-        self.assertTrue(all("confirmed=1" not in value for value in pose_actions))
+        self.assertEqual(5, len(payload["areas"]))
+        actions = [area["action"]["data"] for area in payload["areas"]]
+        self.assertIn("action=robot_control&robot=x1&command=robots", actions)
+        self.assertIn("action=robot_control&robot=x1&command=list", actions)
+        self.assertFalse(any("action=robot_pose" in value for value in actions))
 
     def test_dry_run_validates_generated_asset(self):
         result = rich_menu.deploy("", "", dry_run=True)
         self.assertTrue(result["ok"])
-        self.assertEqual(17, result["areas"])
+        self.assertEqual(5, result["areas"])
+
+    def test_pose_catalog_uses_large_swipeable_cards(self):
+        from shared import line_bot, line_openclaw
+
+        message = line_bot.robot_pose_catalog("x1", line_openclaw.X1_POSES)
+        bubbles = message["contents"]["contents"]
+        self.assertEqual("flex", message["type"])
+        self.assertEqual(3, len(bubbles))
+        cells = [
+            cell for bubble in bubbles for row in bubble["body"]["contents"]
+            for cell in row["contents"] if cell.get("action")
+        ]
+        self.assertEqual(13, len(cells))
+        self.assertTrue(all("preview=0" in item["action"]["data"] for item in cells))
+        self.assertTrue(all("confirmed=1" not in item["action"]["data"] for item in cells))
 
 
 if __name__ == "__main__":

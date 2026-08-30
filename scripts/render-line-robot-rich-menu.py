@@ -9,13 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "assets" / "line-rich-menu"
 WIDTH, HEIGHT = 2500, 1686
-COLS, ROWS = 5, 4
-CELL_W, CELL_H = WIDTH // COLS, HEIGHT // ROWS
-POSES = (
-    "away", "away2", "good", "happy", "hello",
-    "come", "bad", "thanks", "goodbye", "nice",
-    "surprised", "wave-happily", "open-two-arms",
-)
+TAB_HEIGHT = 270
 
 
 def font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont:
@@ -50,54 +44,45 @@ def center_text(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], text:
 def render() -> Path:
     image = Image.new("RGB", (WIDTH, HEIGHT), "#071008")
     draw = ImageDraw.Draw(image)
-    title_font = font(58, bold=True)
-    pose_font = font(44, bold=True)
-    small_font = font(35, bold=True)
-    active = "#f5a623"
-    active_fill = "#392607"
+    tab_font = font(52, bold=True)
+    card_font = font(76, bold=True)
+    subtitle_font = font(35)
 
-    top_labels = (
-        "X1 實機", "查詢\n狀態", "立即\n停止", "動作\n列表", "控制\n說明",
-    )
-    for index, label in enumerate(top_labels):
-        x0, y0 = index * CELL_W, 0
-        x1, y1 = x0 + CELL_W, CELL_H
-        selected = index == 0
-        fill = active_fill if selected else "#101b11"
-        outline = active if selected else "#315133"
+    # Robot tabs. X1 is the active robot; the right tab opens the robot selector.
+    tabs = ((0, WIDTH // 2, "X1 ROBOT", True),
+            (WIDTH // 2, WIDTH, "切換機器人", False))
+    for left, right, label, selected in tabs:
+        fill = "#173000" if selected else "#101b11"
+        outline = "#76b900" if selected else "#315133"
         draw.rounded_rectangle(
-            (x0 + 16, y0 + 16, x1 - 16, y1 - 16), radius=34,
+            (left + 18, 16, right - 18, TAB_HEIGHT - 12), radius=38,
             fill=fill, outline=outline, width=8,
         )
-        center_text(draw, (x0, y0, x1, y1), label,
-                    title_font if index == 0 else small_font,
-                    "#ffffff" if selected else "#dce8dd")
+        center_text(draw, (left, 0, right, TAB_HEIGHT), label, tab_font, "#ffffff")
         if selected:
-            draw.rectangle((x0 + 55, y1 - 42, x1 - 55, y1 - 28), fill=active)
+            draw.rectangle((left + 90, TAB_HEIGHT - 40, right - 90, TAB_HEIGHT - 25),
+                           fill="#76b900")
 
-    for index, pose in enumerate(POSES):
-        row, col = divmod(index, COLS)
-        x0, y0 = col * CELL_W, (row + 1) * CELL_H
-        x1, y1 = x0 + CELL_W, y0 + CELL_H
+    card_top = TAB_HEIGHT + 12
+    card_height = (HEIGHT - card_top) // 2
+    cards = (
+        (0, 0, "動作控制", "開啟 13 個 Pose"),
+        (1, 0, "查詢狀態", "連線・關節・Isaac"),
+        (0, 1, "立即停止", "緊急停止目前動作"),
+        (1, 1, "控制說明", "OWNER ONLY・實機"),
+    )
+    for col, row, title, subtitle in cards:
+        x0, x1 = col * WIDTH // 2, (col + 1) * WIDTH // 2
+        y0, y1 = card_top + row * card_height, card_top + (row + 1) * card_height
+        danger = title == "立即停止"
         draw.rounded_rectangle(
-            (x0 + 16, y0 + 16, x1 - 16, y1 - 16), radius=34,
-            fill="#0c170d", outline="#29452b", width=6,
+            (x0 + 20, y0 + 18, x1 - 20, y1 - 18), radius=48,
+            fill="#251014" if danger else "#0d190f",
+            outline="#e64b62" if danger else "#315b35", width=8,
         )
-        center_text(draw, (x0 + 20, y0 + 20, x1 - 20, y1 - 20),
-                    pose.replace("wave-happily", "wave\nhappily").replace(
-                        "open-two-arms", "open two\narms"
-                    ), pose_font, "#f4f7f4")
-
-    # Two unused cells are intentionally non-tappable and carry safety context.
-    for index, label in ((13, "OWNER\nONLY"), (14, "周圍淨空\n再操作")):
-        row, col = divmod(index, COLS)
-        x0, y0 = col * CELL_W, (row + 1) * CELL_H
-        x1, y1 = x0 + CELL_W, y0 + CELL_H
-        draw.rounded_rectangle(
-            (x0 + 16, y0 + 16, x1 - 16, y1 - 16), radius=34,
-            fill="#080d08", outline="#1c2a1d", width=4,
-        )
-        center_text(draw, (x0, y0, x1, y1), label, small_font, "#829083")
+        center_text(draw, (x0, y0 + 30, x1, y1 - 70), title, card_font, "#ffffff")
+        center_text(draw, (x0, y1 - 145, x1, y1 - 30), subtitle,
+                    subtitle_font, "#f093a1" if danger else "#9db79f")
 
     OUTPUT.mkdir(parents=True, exist_ok=True)
     target = OUTPUT / "x1-control.png"
