@@ -42,7 +42,7 @@ class LineRobotTests(unittest.TestCase):
         self, _verify, _claim, _owner, robot_command, reply_messages
     ):
         response = function_app.line_webhook(postback_request(
-            "action=robot_pose&robot=x1&pose=hello"
+            "action=robot_pose&robot=x1&pose=hello&confirmed=1"
         ))
 
         self.assertEqual(200, response.status_code)
@@ -52,6 +52,53 @@ class LineRobotTests(unittest.TestCase):
         sent = reply_messages.call_args.args[1][0]
         self.assertEqual(13, len(sent["quickReply"]["items"]))
         self.assertIn("hello", sent["text"])
+
+    @mock.patch("function_app.line_bot.reply_messages")
+    @mock.patch("function_app.line_openclaw.robot_command")
+    @mock.patch("function_app.inference_hub.is_line_owner", return_value=True)
+    @mock.patch("function_app.store.claim_line_webhook_event", return_value=True)
+    @mock.patch("function_app.line_bot.verify_signature", return_value=True)
+    @mock.patch.dict(
+        "os.environ",
+        {"LINE_CHANNEL_SECRET": "secret", "LINE_CHANNEL_ACCESS_TOKEN": "line-token"},
+        clear=True,
+    )
+    def test_physical_pose_requires_a_second_confirmation(
+        self, _verify, _claim, _owner, robot_command, reply_messages
+    ):
+        response = function_app.line_webhook(postback_request(
+            "action=robot_pose&robot=x1&pose=away&preview=0"
+        ))
+
+        self.assertEqual(200, response.status_code)
+        robot_command.assert_not_called()
+        message = reply_messages.call_args.args[1][0]
+        self.assertEqual("confirm", message["template"]["type"])
+        self.assertIn("confirmed=1", message["template"]["actions"][0]["data"])
+
+    @mock.patch("function_app.line_bot.reply")
+    @mock.patch("function_app.line_openclaw.robot_command", return_value={
+        "ok": True, "playing": False, "joint_states": True,
+        "isaac_mirror": True, "safe_gestures": ["away", "thanks"],
+    })
+    @mock.patch("function_app.inference_hub.is_line_owner", return_value=True)
+    @mock.patch("function_app.store.claim_line_webhook_event", return_value=True)
+    @mock.patch("function_app.line_bot.verify_signature", return_value=True)
+    @mock.patch.dict(
+        "os.environ",
+        {"LINE_CHANNEL_SECRET": "secret", "LINE_CHANNEL_ACCESS_TOKEN": "line-token"},
+        clear=True,
+    )
+    def test_status_postback_is_owner_scoped(
+        self, _verify, _claim, _owner, robot_command, reply
+    ):
+        response = function_app.line_webhook(postback_request(
+            "action=robot_control&robot=x1&command=status"
+        ))
+
+        self.assertEqual(200, response.status_code)
+        robot_command.assert_called_once_with("U-owner", "status", robot="x1")
+        self.assertIn("Isaac mirror：在線", reply.call_args.args[1])
 
     @mock.patch("function_app.line_bot.reply_messages")
     @mock.patch("function_app.line_openclaw.robot_command")

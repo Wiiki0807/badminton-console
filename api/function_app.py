@@ -208,6 +208,9 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                 values = parse_qs(str((event.get("postback") or {}).get("data", "")))
                 action = values.get("action", [""])[0]
                 user_id = str(source.get("userId", ""))
+                if action == "robot_pose_cancel":
+                    line_bot.reply(reply_token, "已取消 X1 實機動作。", access_token)
+                    continue
                 if action == "robot_pose":
                     robot = values.get("robot", [""])[0].lower()
                     gesture = values.get("pose", [""])[0].lower()
@@ -218,6 +221,14 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                         text = "這個機器人或動作不在允許清單中。"
                     else:
                         preview = values.get("preview", [""])[0] == "1"
+                        confirmed = values.get("confirmed", [""])[0] == "1"
+                        if not preview and not confirmed:
+                            line_bot.reply_messages(
+                                reply_token,
+                                [line_bot.robot_pose_confirmation(robot, gesture)],
+                                access_token,
+                            )
+                            continue
                         result = line_openclaw.robot_command(
                             user_id, "play", gesture, robot=robot, preview=preview
                         )
@@ -233,6 +244,44 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                         )],
                         access_token,
                     )
+                    continue
+                if action == "robot_control":
+                    robot = values.get("robot", [""])[0].lower()
+                    command = values.get("command", [""])[0].lower()
+                    if not inference_hub.is_line_owner(user_id):
+                        text = "這個 X1 動作控制只允許已設定的主人使用。"
+                    elif robot != "x1" or command not in {"status", "stop", "list", "help"}:
+                        text = "這個機器人控制指令不在允許清單中。"
+                    elif command == "list":
+                        line_bot.reply_messages(
+                            reply_token,
+                            [line_bot.robot_pose_quick_reply("x1", line_openclaw.X1_POSES)],
+                            access_token,
+                        )
+                        continue
+                    elif command == "help":
+                        text = (
+                            "X1 實機控制說明\n"
+                            "• 點選 pose 後還要再次確認才會移動。\n"
+                            "• 執行前請確認機器人周圍淨空。\n"
+                            "• 發現異常請立即按「停止」。\n"
+                            "• 此選單只連結給已設定的主人。"
+                        )
+                    else:
+                        result = line_openclaw.robot_command(
+                            user_id, command, robot=robot
+                        )
+                        if command == "stop":
+                            text = "⏹️ X1 已收到停止指令。" if result.get("ok") else "X1 目前無法停止。"
+                        else:
+                            text = (
+                                "X1 狀態\n"
+                                f"• 動作中：{'是' if result.get('playing') else '否'}\n"
+                                f"• 關節資料：{'正常' if result.get('joint_states') else '無資料'}\n"
+                                f"• Isaac mirror：{'在線' if result.get('isaac_mirror') else '離線'}\n"
+                                f"• 安全動作：{len(result.get('safe_gestures') or [])} 個"
+                            ) if result.get("ok") else "X1 狀態目前無法取得。"
+                    line_bot.reply(reply_token, text, access_token)
                     continue
                 task_id = str(uuid.UUID(values.get("task", [""])[0]))
                 if action == "news_detail":

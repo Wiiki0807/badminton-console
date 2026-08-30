@@ -963,6 +963,37 @@ def robot_pose_quick_reply(
     }
 
 
+def robot_pose_confirmation(robot: str, pose: str) -> dict[str, Any]:
+    """Require an explicit second tap before a Rich Menu can move physical hardware."""
+    if robot != "x1" or not re.fullmatch(r"[a-z0-9-]{1,32}", pose):
+        raise ValueError("invalid robot pose confirmation")
+    return {
+        "type": "template",
+        "altText": f"確認讓 X1 實機播放 {pose}",
+        "template": {
+            "type": "confirm",
+            "text": f"確認機器人周圍淨空，讓 X1 實機播放 {pose}？",
+            "actions": [
+                {
+                    "type": "postback",
+                    "label": "確認播放",
+                    "data": (
+                        f"action=robot_pose&robot={robot}&pose={pose}"
+                        "&preview=0&confirmed=1"
+                    ),
+                    "displayText": f"確認 X1 實機播放 {pose}",
+                },
+                {
+                    "type": "postback",
+                    "label": "取消",
+                    "data": "action=robot_pose_cancel",
+                    "displayText": "取消 X1 動作",
+                },
+            ],
+        },
+    }
+
+
 def _send_messages(
     url: str, value: dict[str, Any], access_token: str, *, retry_key: str = ""
 ) -> None:
