@@ -17,17 +17,14 @@ API = "https://api.line.me"
 DATA_API = "https://api-data.line.me"
 ALIAS = "x1-control"
 WIDTH, HEIGHT = 2500, 1686
-POSES = (
-    "away", "away2", "good", "happy", "hello",
-    "come", "bad", "thanks", "goodbye", "nice",
-    "surprised", "wave-happily", "open-two-arms",
-)
+TAB_HEIGHT = 270
 
 
-def bounds(col: int, row: int) -> dict[str, int]:
-    x0, x1 = round(col * WIDTH / 5), round((col + 1) * WIDTH / 5)
-    y0, y1 = round(row * HEIGHT / 4), round((row + 1) * HEIGHT / 4)
-    return {"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0}
+def area(x: int, y: int, width: int, height: int, data: str) -> dict[str, object]:
+    return {
+        "bounds": {"x": x, "y": y, "width": width, "height": height},
+        "action": postback(data),
+    }
 
 
 def postback(data: str) -> dict[str, str]:
@@ -35,32 +32,22 @@ def postback(data: str) -> dict[str, str]:
 
 
 def menu_payload() -> dict[str, object]:
+    content_top = TAB_HEIGHT
+    content_height = HEIGHT - content_top
+    half_width, half_height = WIDTH // 2, content_height // 2
     areas: list[dict[str, object]] = [
-        {
-            "bounds": bounds(1, 0),
-            "action": postback("action=robot_control&robot=x1&command=status"),
-        },
-        {
-            "bounds": bounds(2, 0),
-            "action": postback("action=robot_control&robot=x1&command=stop"),
-        },
-        {
-            "bounds": bounds(3, 0),
-            "action": postback("action=robot_control&robot=x1&command=list"),
-        },
-        {
-            "bounds": bounds(4, 0),
-            "action": postback("action=robot_control&robot=x1&command=help"),
-        },
+        area(half_width, 0, WIDTH - half_width, TAB_HEIGHT,
+             "action=robot_control&robot=x1&command=robots"),
+        area(0, content_top, half_width, half_height,
+             "action=robot_control&robot=x1&command=list"),
+        area(half_width, content_top, WIDTH - half_width, half_height,
+             "action=robot_control&robot=x1&command=status"),
+        area(0, content_top + half_height, half_width, HEIGHT - content_top - half_height,
+             "action=robot_control&robot=x1&command=stop"),
+        area(half_width, content_top + half_height, WIDTH - half_width,
+             HEIGHT - content_top - half_height,
+             "action=robot_control&robot=x1&command=help"),
     ]
-    for index, pose in enumerate(POSES):
-        row, col = divmod(index, 5)
-        areas.append({
-            "bounds": bounds(col, row + 1),
-            "action": postback(
-                f"action=robot_pose&robot=x1&pose={pose}&preview=0"
-            ),
-        })
     return {
         "size": {"width": WIDTH, "height": HEIGHT},
         "selected": True,
