@@ -155,8 +155,25 @@ class NewsBridgeTests(unittest.TestCase):
         self.assertIsNotNone(
             bridge.X1_CAMERA_SNAPSHOT_RE.search("請將 X1 機器人頭部視角的照片拍給我")
         )
-        self.assertEqual("left-hand", bridge._requested_x1_camera_view("拍 X1 左手相機照片"))
-        self.assertEqual("right-hand", bridge._requested_x1_camera_view("拍 X1 右臂 camera snapshot"))
+        self.assertEqual(["left-hand"], bridge._requested_x1_camera_views("拍 X1 左手相機照片"))
+        self.assertEqual(["right-hand"], bridge._requested_x1_camera_views("拍 X1 右臂 camera snapshot"))
+        self.assertEqual(
+            ["head", "left-hand"],
+            bridge._requested_x1_camera_views("將 X1 的頭部和左手視角照片給我"),
+        )
+
+    @mock.patch("line_openclaw_bridge._callback")
+    @mock.patch("line_openclaw_bridge._capture_x1_snapshot")
+    def test_multi_view_request_returns_multiple_artifacts(self, capture, callback):
+        capture.side_effect = [({"name": "head.jpg"}, "頭部"), ({"name": "left.jpg"}, "左手")]
+
+        bridge._run_agent(
+            "task-1", "請將 X1 機器人的頭部和左手視角照片給我", "https://callback.test/api/"
+        )
+
+        payload = callback.call_args.args[1]
+        self.assertEqual([{"name": "head.jpg"}, {"name": "left.jpg"}], payload["artifacts"])
+        self.assertEqual([mock.call("head"), mock.call("left-hand")], capture.call_args_list)
 
     def test_rejects_sensitive_workspace_artifact(self):
         with tempfile.TemporaryDirectory() as directory:
