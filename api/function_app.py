@@ -23,6 +23,7 @@ from shared import daily_briefing
 from shared import line_openclaw
 from shared import news_digest
 from shared import market_snapshot
+from shared import remote_image
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
@@ -119,6 +120,17 @@ def _openclaw_artifact(value: object) -> dict | None:
     if not raw or len(raw) > 512 * 1024 or value.get("size") != len(raw):
         return None
     return {"name": filename, "contentType": content_type, "size": len(raw), "raw": raw}
+
+
+def _openclaw_image_urls(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value[:4]:
+        candidate = str(item or "").strip()
+        if candidate.startswith("https://") and len(candidate) <= 2000 and candidate not in result:
+            result.append(candidate)
+    return result
 
 
 @app.route(route="health", methods=["GET"])
@@ -581,6 +593,7 @@ def line_openclaw_callback(req: func.HttpRequest) -> func.HttpResponse:
             if status == "completed" else None
         )
         artifact = _openclaw_artifact(body.get("artifact")) if status == "completed" else None
+        image_urls = _openclaw_image_urls(body.get("imageUrls")) if status == "completed" else []
         if artifact:
             try:
                 download_url = store.upload_line_artifact(
@@ -595,6 +608,25 @@ def line_openclaw_callback(req: func.HttpRequest) -> func.HttpResponse:
                 line_bot.push_text(
                     str(row.get("targetId", "")),
                     f"{prefix} {task_id[:8]}\n\n{result_text}\n\n檔案上傳失敗，請重新執行任務。",
+                    access_token, retry_key=task_id,
+                )
+        elif image_urls:
+            delivered_images: list[tuple[str, str]] = []
+            for image_url in image_urls:
+                try:
+                    image_raw, image_type = remote_image.fetch_public_image(image_url)
+                    delivered_images.append(store.upload_line_generated_image(image_raw, image_type))
+                except Exception:
+                    logging.exception("OpenClaw remote image rejected url=%s", image_url[:200])
+            if delivered_images:
+                line_bot.push_images(
+                    str(row.get("targetId", "")), task_id, delivered_images,
+                    f"{prefix} {task_id[:8]}\n\n{result_text}", access_token,
+                )
+            else:
+                line_bot.push_text(
+                    str(row.get("targetId", "")),
+                    f"{prefix} {task_id[:8]}\n\n{result_text}\n\n圖片暫時無法下載，請稍後再試。",
                     access_token, retry_key=task_id,
                 )
         elif snapshot:

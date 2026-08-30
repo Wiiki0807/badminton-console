@@ -64,6 +64,21 @@ class NewsBridgeTests(unittest.TestCase):
         self.assertIsNone(artifact)
         self.assertIn("無法安全附加", cleaned)
 
+    def test_extracts_remote_media_images_and_removes_bare_links(self):
+        text = (
+            "找到官方圖片：\n"
+            "MEDIA:https://www.unitree.com/images/g1-one.jpg\n\n"
+            "MEDIA:https://www.unitree.com/images/g1-two.png\n"
+            "來源：https://www.unitree.com/g1"
+        )
+
+        urls, cleaned = bridge._extract_remote_images(text)
+
+        self.assertEqual(2, len(urls))
+        self.assertEqual("https://www.unitree.com/images/g1-one.jpg", urls[0])
+        self.assertNotIn("MEDIA:", cleaned)
+        self.assertIn("來源：https://www.unitree.com/g1", cleaned)
+
 
 if __name__ == "__main__":
     unittest.main()
