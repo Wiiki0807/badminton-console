@@ -123,6 +123,24 @@ def _openclaw_artifact(value: object) -> dict | None:
     return {"name": filename, "contentType": content_type, "size": len(raw), "raw": raw}
 
 
+def _openclaw_artifacts(body: dict) -> list[dict]:
+    """Accept up to three bounded artifacts while retaining legacy singular payloads."""
+    values = body.get("artifacts")
+    if not isinstance(values, list):
+        values = [body.get("artifact")]
+    result: list[dict] = []
+    total = 0
+    for value in values[:3]:
+        artifact = _openclaw_artifact(value)
+        if artifact is None:
+            continue
+        total += artifact["size"]
+        if total > 768 * 1024:
+            break
+        result.append(artifact)
+    return result
+
+
 def _openclaw_image_urls(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -734,19 +752,21 @@ def line_openclaw_callback(req: func.HttpRequest) -> func.HttpResponse:
             market_snapshot.validate(body.get("marketSnapshot"))
             if status == "completed" else None
         )
-        artifact = _openclaw_artifact(body.get("artifact")) if status == "completed" else None
+        artifacts = _openclaw_artifacts(body) if status == "completed" else []
         image_urls = _openclaw_image_urls(body.get("imageUrls")) if status == "completed" else []
-        if artifact:
+        if artifacts:
             try:
-                if artifact["contentType"] in {"image/jpeg", "image/png", "image/webp"}:
-                    image_pair = store.upload_line_generated_image(
-                        artifact["raw"], artifact["contentType"]
-                    )
+                if all(item["contentType"] in {"image/jpeg", "image/png", "image/webp"} for item in artifacts):
+                    image_pairs = [
+                        store.upload_line_generated_image(item["raw"], item["contentType"])
+                        for item in artifacts
+                    ]
                     line_bot.push_images(
-                        str(row.get("targetId", "")), task_id, [image_pair],
+                        str(row.get("targetId", "")), task_id, image_pairs,
                         f"{prefix} {task_id[:8]}\n\n{result_text}", access_token,
                     )
                 else:
+                    artifact = artifacts[0]
                     download_url = store.upload_line_artifact(
                         artifact["raw"], artifact["name"], artifact["contentType"]
                     )

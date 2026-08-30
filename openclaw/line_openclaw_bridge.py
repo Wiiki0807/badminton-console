@@ -38,6 +38,7 @@ WORKSPACE_DIR = Path(
 )
 X1_GESTURE_CONTROL = STATE_DIR / "x1_gesture_control.py"
 X1_CAMERA_CONTROL = STATE_DIR / "x1_camera_control.py"
+X1_LOCATE_CONTROL = STATE_DIR / "x1_locate_control.py"
 SAFE_X1_GESTURES = {
     "away", "away2", "good", "happy", "hello", "come", "bad", "thanks",
     "goodbye", "nice", "surprised", "wave-happily", "open-two-arms",
@@ -74,6 +75,10 @@ MARKET_CHART_RE = re.compile(
 X1_CAMERA_SNAPSHOT_RE = re.compile(
     r"(?=.*(?:X1|機器人))(?=.*(?:頭部|左手|右手|手部|視角|相機|camera))"
     r"(?=.*(?:照片|拍照|取像|snapshot|影像))",
+    re.IGNORECASE | re.DOTALL,
+)
+X1_LOCATE_REQUEST_RE = re.compile(
+    r"(?:LocateAnything|物件偵測|(?:偵測|辨識|找出).{0,24}(?:數量|幾個|位置|座標|框|bounding))",
     re.IGNORECASE | re.DOTALL,
 )
 NEWS_JSON_INSTRUCTION = """
@@ -312,12 +317,19 @@ def _extract_remote_images(text: str) -> tuple[list[str], str]:
     return urls, cleaned
 
 
-def _requested_x1_camera_view(text: str) -> str:
-    if re.search(r"(?:左手|左臂|left[ -]?(?:hand|arm))", text, re.IGNORECASE):
-        return "left-hand"
-    if re.search(r"(?:右手|右臂|right[ -]?(?:hand|arm))", text, re.IGNORECASE):
-        return "right-hand"
-    return "head"
+def _requested_x1_camera_views(text: str) -> list[str]:
+    """Return every explicitly requested view in mention order."""
+    matches: list[tuple[int, str]] = []
+    patterns = {
+        "head": r"(?:頭部|頭頂|head)",
+        "left-hand": r"(?:左手|左臂|left[ -]?(?:hand|arm))",
+        "right-hand": r"(?:右手|右臂|right[ -]?(?:hand|arm))",
+    }
+    for view, pattern in patterns.items():
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            matches.append((match.start(), view))
+    return [view for _, view in sorted(matches)] or ["head"]
 
 
 def _capture_x1_snapshot(view: str = "head") -> tuple[dict[str, Any], str]:
@@ -346,11 +358,12 @@ def _capture_x1_snapshot(view: str = "head") -> tuple[dict[str, Any], str]:
 
 def _run_agent(task_id: str, text: str, callback_url: str) -> None:
     try:
-        if X1_CAMERA_SNAPSHOT_RE.search(text):
-            artifact, caption = _capture_x1_snapshot(_requested_x1_camera_view(text))
+        if X1_CAMERA_SNAPSHOT_RE.search(text) and not X1_LOCATE_REQUEST_RE.search(text):
+            captures = [_capture_x1_snapshot(view) for view in _requested_x1_camera_views(text)]
             _callback(callback_url, {
-                "taskId": task_id, "status": "completed", "text": caption,
-                "artifact": artifact,
+                "taskId": task_id, "status": "completed",
+                "text": "\n".join(caption for _, caption in captures),
+                "artifacts": [artifact for artifact, _ in captures],
             })
             return
         market_chart_requested = bool(MARKET_CHART_RE.search(text))
@@ -359,6 +372,15 @@ def _run_agent(task_id: str, text: str, callback_url: str) -> None:
                 "安全約束：只可呼叫 exec，且 command 必須完全是 "
                 "'/home/tommywu/.openclaw/robot_control.py status'；"
                 "不可使用 find、grep、cat、shell 組合或其他命令。執行後依使用者要求回覆。\n\n"
+                f"使用者要求：{text}"
+            )
+        elif X1_LOCATE_REQUEST_RE.search(text):
+            text = (
+                "X1 視覺安全約束：必須使用 x1-vision-camera skill，且只可透過 exec 直接呼叫 "
+                "/home/tommywu/.openclaw/x1_locate_control.py。不得直接呼叫 8080/8090、"
+                "不得開啟任意攝影機。從使用者文字抽取 1-8 個短物件名稱作為 --query，"
+                "並選擇 head、left-hand 或 right-hand；未指定視角時使用 head。"
+                "回覆數量、center_1000、bbox_1000，若 JSON 有 media，最後原樣輸出 MEDIA 路徑。\n\n"
                 f"使用者要求：{text}"
             )
         elif re.search(

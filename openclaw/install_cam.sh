@@ -83,6 +83,8 @@ install -o "${user_name}" -g "${user_name}" -m 700 \
 install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/x1_camera_control.py" "${state_dir}/x1_camera_control.py"
 install -o "${user_name}" -g "${user_name}" -m 700 \
+  "${source_dir}/x1_locate_control.py" "${state_dir}/x1_locate_control.py"
+install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/robot_control.py" "${state_dir}/robot_control.py"
 install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/azure_callback.py" "${state_dir}/azure_callback.py"

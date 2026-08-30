@@ -159,6 +159,40 @@ class OpenClawArtifactTests(unittest.TestCase):
         )
         finish.assert_called_once_with(task_id, "completed")
 
+    @mock.patch("function_app.store.finish_line_openclaw_task")
+    @mock.patch("function_app.line_bot.push_images")
+    @mock.patch(
+        "function_app.store.upload_line_generated_image",
+        side_effect=[("https://blob.example/head.jpg", "https://blob.example/head-p.jpg"),
+                     ("https://blob.example/left.jpg", "https://blob.example/left-p.jpg")],
+    )
+    @mock.patch("function_app.store.get_line_openclaw_task", return_value={"targetId": "U-owner"})
+    @mock.patch("function_app.inference_hub.openclaw_callback_token_matches", return_value=True)
+    @mock.patch.dict("os.environ", {"LINE_CHANNEL_ACCESS_TOKEN": "line-token"}, clear=True)
+    def test_callback_sends_multiple_local_camera_images(
+        self, _auth, _get_task, upload, push, finish
+    ):
+        task_id = "22345678-1234-1234-1234-123456789012"
+        images = [b"\xff\xd8head\xff\xd9", b"\xff\xd8left\xff\xd9"]
+        body = json.dumps({
+            "taskId": task_id, "status": "completed", "text": "頭部與左手",
+            "artifacts": [{
+                "name": f"view-{index}.jpg", "contentType": "image/jpeg",
+                "size": len(raw), "base64": base64.b64encode(raw).decode(),
+            } for index, raw in enumerate(images)],
+        }).encode()
+        req = function_app.func.HttpRequest(
+            method="POST", url="https://example.test/api/line-openclaw-callback",
+            headers={"x-line-openclaw-token": "secret"}, body=body,
+        )
+
+        response = function_app.line_openclaw_callback(req)
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(2, upload.call_count)
+        self.assertEqual(2, len(push.call_args.args[2]))
+        finish.assert_called_once_with(task_id, "completed")
+
     @mock.patch("shared.store.generate_blob_sas", return_value="signature")
     @mock.patch("shared.store.BlobServiceClient")
     @mock.patch.dict(
