@@ -41,6 +41,7 @@ SAFE_X1_GESTURES = {
     "away", "away2", "good", "happy", "hello", "come", "bad", "thanks",
     "goodbye", "nice", "surprised", "wave-happily", "open-two-arms",
 }
+AGENT_RUN_LOCK = threading.Lock()
 MEDIA_RE = re.compile(
     r"MEDIA:\s*((?:/|[A-Za-z]:[\\/])[^\r\n)]+)", re.IGNORECASE
 )
@@ -116,12 +117,22 @@ def _runtime_env(name: str) -> str:
 def _openclaw(*args: str, timeout: int = 60) -> dict[str, Any]:
     completed = subprocess.run(
         [NODE, OPENCLAW_ENTRY, *args],
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
         timeout=timeout,
         env=os.environ.copy(),
     )
+    if completed.returncode:
+        detail = (completed.stderr or completed.stdout or "no diagnostic output").strip()
+        detail = re.sub(
+            r"(?i)(bearer|token|secret|password)(\s*[=:]\s*)\S+",
+            r"\1\2[redacted]",
+            detail,
+        )[-800:]
+        raise RuntimeError(
+            f"OpenClaw exited with code {completed.returncode}: {detail}"
+        )
     value = json.loads(completed.stdout)
     if not isinstance(value, dict):
         raise RuntimeError("OpenClaw returned an invalid response")
@@ -319,11 +330,16 @@ def _run_agent(task_id: str, text: str, callback_url: str) -> None:
                 f"使用者要求：{text}"
             )
         text = _news_task_message(text)
-        result = _openclaw(
-            "agent", "--agent", "main", "--message", text,
-            "--session-key", "agent:main:line-owner", "--timeout", "1800", "--json",
-            timeout=1860,
-        )
+        # One shared line-owner session allowed concurrent task threads to race
+        # for the same OpenClaw session lock. Keep each task isolated and also
+        # serialize the CLI so shared workspace tools cannot overlap.
+        session_key = f"agent:main:line-task-{task_id.replace('-', '')[:16]}"
+        with AGENT_RUN_LOCK:
+            result = _openclaw(
+                "agent", "--agent", "main", "--message", text,
+                "--session-key", session_key, "--timeout", "1800", "--json",
+                timeout=1860,
+            )
         visible = str(
             ((result.get("result") or {}).get("meta") or {}).get("finalAssistantVisibleText")
             or (result.get("result") or {}).get("text")
@@ -471,6 +487,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not _owner_id() or not hmac.compare_digest(user_id, _owner_id()):
                     self._json(403, {"error": "owner only"})
                     return
+                self._json(200, _x1_robot_command(body))
+                return
+            if self.path == "/v1/admin/robot":
+                # Private loopback entry for the Inference Hub Control UI. The
+                # public Funnel gateway does not expose paths below /v1/admin.
                 self._json(200, _x1_robot_command(body))
                 return
             if self.path == "/v1/reminders":

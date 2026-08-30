@@ -10,6 +10,37 @@ import line_openclaw_bridge as bridge
 
 class NewsBridgeTests(unittest.TestCase):
     @mock.patch("line_openclaw_bridge.subprocess.run")
+    def test_openclaw_failure_reports_sanitized_stderr(self, run):
+        run.return_value = mock.Mock(
+            returncode=1,
+            stdout="",
+            stderr="session is busy token=do-not-leak",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "session is busy") as raised:
+            bridge._openclaw("agent", "--json")
+
+        self.assertNotIn("do-not-leak", str(raised.exception))
+
+    @mock.patch("line_openclaw_bridge._callback")
+    @mock.patch("line_openclaw_bridge._openclaw")
+    def test_line_tasks_use_isolated_openclaw_sessions(self, openclaw, callback):
+        openclaw.return_value = {"result": {"text": "完成"}}
+
+        bridge._run_agent(
+            "12345678-abcd-4321-abcd-1234567890ab",
+            "整理一項工作",
+            "https://example.test/callback",
+        )
+
+        arguments = openclaw.call_args.args
+        session_index = arguments.index("--session-key") + 1
+        self.assertEqual(
+            "agent:main:line-task-12345678abcd4321", arguments[session_index]
+        )
+        callback.assert_called_once()
+
+    @mock.patch("line_openclaw_bridge.subprocess.run")
     def test_x1_direct_play_uses_allowlisted_controller_and_real_mode(self, run):
         run.return_value = mock.Mock(
             returncode=0, stdout=json.dumps({"ok": True}), stderr=""
