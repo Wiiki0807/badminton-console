@@ -1247,9 +1247,13 @@ def artifact_flex(filename: str, download_url: str, size: int, summary: str = ""
     """Build a compact file card backed by a short-lived HTTPS download URL."""
     if not filename or not download_url.startswith("https://"):
         raise ValueError("invalid artifact card")
-    size_text = f"{size / 1024:.1f} KB" if size >= 1024 else f"{size} bytes"
+    is_video = filename.lower().endswith(".mp4")
+    if size >= 1024 * 1024:
+        size_text = f"{size / (1024 * 1024):.1f} MB"
+    else:
+        size_text = f"{size / 1024:.1f} KB" if size >= 1024 else f"{size} bytes"
     contents: list[dict[str, Any]] = [
-        {"type": "text", "text": "📄 OpenClaw 檔案已完成", "weight": "bold",
+        {"type": "text", "text": "🎬 短影片已完成" if is_video else "📄 OpenClaw 檔案已完成", "weight": "bold",
          "size": "lg", "wrap": True},
         {"type": "text", "text": filename[:120], "size": "sm", "weight": "bold",
          "color": "#333333", "wrap": True, "margin": "md"},
@@ -1271,7 +1275,7 @@ def artifact_flex(filename: str, download_url: str, size: int, summary: str = ""
             "footer": {
                 "type": "box", "layout": "vertical", "contents": [{
                     "type": "button", "style": "primary", "color": "#2E7D32",
-                    "action": {"type": "uri", "label": "下載檔案", "uri": download_url},
+                      "action": {"type": "uri", "label": "下載影片" if is_video else "下載檔案", "uri": download_url},
                 }],
             },
         },

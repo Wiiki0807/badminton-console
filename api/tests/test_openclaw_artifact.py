@@ -43,6 +43,67 @@ class OpenClawArtifactTests(unittest.TestCase):
         self.assertEqual("下載檔案", button["action"]["label"])
         self.assertEqual("https://blob.example/file?sas=1", button["action"]["uri"])
 
+    def test_video_artifact_flex_has_download_video_button(self):
+        message = line_bot.artifact_flex(
+            "final.mp4", "https://blob.example/final.mp4?sas=1", 25 * 1024 * 1024,
+            "天闕迷夢已完成。",
+        )
+
+        self.assertEqual("🎬 短影片已完成", message["contents"]["body"]["contents"][0]["text"])
+        button = message["contents"]["footer"]["contents"][0]
+        self.assertEqual("下載影片", button["action"]["label"])
+
+    @mock.patch("function_app.store.get_line_openclaw_task", return_value={"targetId": "U-owner"})
+    @mock.patch(
+        "function_app.store.create_line_video_upload",
+        return_value=("https://a.blob.core.windows.net/upload", "https://a.blob.core.windows.net/read"),
+    )
+    @mock.patch("function_app.inference_hub.openclaw_callback_token_matches", return_value=True)
+    def test_video_upload_ticket_uses_direct_blob_urls(self, _auth, create, _get_task):
+        task_id = "12345678-1234-1234-1234-123456789012"
+        req = function_app.func.HttpRequest(
+            method="POST", url="https://example.test/api/line-openclaw-artifact-upload",
+            headers={"x-line-openclaw-token": "secret"},
+            body=json.dumps({
+                "taskId": task_id, "name": "final.mp4",
+                "contentType": "video/mp4", "size": 1024,
+            }).encode(),
+        )
+
+        response = function_app.line_openclaw_artifact_upload(req)
+
+        self.assertEqual(200, response.status_code)
+        create.assert_called_once_with("final.mp4", 1024)
+        self.assertIn("uploadUrl", json.loads(response.get_body()))
+
+    @mock.patch("function_app.store.finish_line_openclaw_task")
+    @mock.patch("function_app.line_bot.push_artifact")
+    @mock.patch("function_app.store.get_line_openclaw_task", return_value={"targetId": "U-owner"})
+    @mock.patch("function_app.inference_hub.openclaw_callback_token_matches", return_value=True)
+    @mock.patch.dict("os.environ", {"LINE_CHANNEL_ACCESS_TOKEN": "line-token"}, clear=True)
+    def test_callback_pushes_uploaded_video_card(self, _auth, _get_task, push, finish):
+        task_id = "12345678-1234-1234-1234-123456789012"
+        download = "https://account.blob.core.windows.net/live/final.mp4?sas=1"
+        req = function_app.func.HttpRequest(
+            method="POST", url="https://example.test/api/line-openclaw-callback",
+            headers={"x-line-openclaw-token": "secret"},
+            body=json.dumps({
+                "taskId": task_id, "status": "completed", "text": "影片完成。",
+                "remoteArtifact": {
+                    "name": "final.mp4", "contentType": "video/mp4",
+                    "size": 1024, "downloadUrl": download,
+                },
+            }).encode(),
+        )
+
+        response = function_app.line_openclaw_callback(req)
+
+        self.assertEqual(200, response.status_code)
+        push.assert_called_once_with(
+            "U-owner", task_id, "final.mp4", download, 1024, "影片完成。", "line-token"
+        )
+        finish.assert_called_once_with(task_id, "completed")
+
     def test_rejects_artifact_with_mismatched_size(self):
         value = {
             "name": "server.py", "contentType": "text/x-python", "size": 999,

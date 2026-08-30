@@ -6,6 +6,10 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
+# PDF research tasks use these local tools after Tavily/web extraction.
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+  poppler-utils imagemagick ffmpeg
+
 user_name="tommywu"
 user_home="/home/${user_name}"
 state_dir="${user_home}/.openclaw"
@@ -92,6 +96,8 @@ install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/robot_control.py" "${state_dir}/robot_control.py"
 install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/azure_callback.py" "${state_dir}/azure_callback.py"
+install -o "${user_name}" -g "${user_name}" -m 700 \
+  "${source_dir}/veo_story_video.py" "${state_dir}/veo_story_video.py"
 workspace_agents="${source_dir}/workspace/AGENTS.md"
 if [[ ! -f "${workspace_agents}" ]]; then
   workspace_agents="${source_dir}/openclaw-AGENTS.md"
@@ -124,6 +130,18 @@ if [[ -f "${camera_skill_source}" ]]; then
     "${camera_skill_source}" \
     "${state_dir}/workspace/skills/x1-vision-camera/SKILL.md"
 fi
+veo_skill_source="${source_dir}/workspace/skills/veo-story-video"
+if [[ -f "${veo_skill_source}/SKILL.md" ]]; then
+  install -o "${user_name}" -g "${user_name}" -m 700 -d \
+    "${state_dir}/workspace/skills/veo-story-video" \
+    "${state_dir}/workspace/skills/veo-story-video/references"
+  install -o "${user_name}" -g "${user_name}" -m 600 \
+    "${veo_skill_source}/SKILL.md" \
+    "${state_dir}/workspace/skills/veo-story-video/SKILL.md"
+  install -o "${user_name}" -g "${user_name}" -m 600 \
+    "${veo_skill_source}/references/manifest.md" \
+    "${state_dir}/workspace/skills/veo-story-video/references/manifest.md"
+fi
 install -o "${user_name}" -g "${user_name}" -m 644 \
   "${source_dir}/line-openclaw-bridge.service" \
   "${user_home}/.config/systemd/user/line-openclaw-bridge.service"
@@ -144,11 +162,24 @@ if runuser -u "${user_name}" -- env XDG_RUNTIME_DIR=/run/user/1000 \
     systemctl --user restart openclaw-gateway.service
 fi
 
-# Keep the gateway exec policy narrow and reproducible. These executable
-# wrappers validate every action/argument internally; never allowlist python3.
-for wrapper in x1_camera_control.py x1_locate_control.py x1_visual_reactor_control.py; do
+# Keep robot control on validated wrappers; never allowlist python3.
+for wrapper in x1_camera_control.py x1_locate_control.py x1_visual_reactor_control.py veo_story_video.py; do
   runuser -u "${user_name}" -- env HOME="${user_home}" bash -lc \
     "source \"${user_home}/.nvm/nvm.sh\" && source \"${env_file}\" && openclaw approvals allowlist add --agent main \"${state_dir}/${wrapper}\" >/dev/null"
+done
+
+# Permit PDF download/extraction pipelines used by long-running research tasks.
+# bash/dash and strictInlineEval=false intentionally allow compound commands
+# such as curl -> pdftotext -> sed without an interactive approval prompt.
+runuser -u "${user_name}" -- env HOME="${user_home}" bash -lc \
+  "source \"${user_home}/.nvm/nvm.sh\" && source \"${env_file}\" && openclaw config set tools.exec.strictInlineEval false --strict-json >/dev/null"
+for executable in \
+  /usr/bin/bash /usr/bin/dash /usr/bin/mkdir /usr/bin/curl \
+  /usr/bin/pdftotext /usr/bin/pdfinfo /usr/bin/pdftoppm \
+  /usr/bin/wc /usr/bin/sed /usr/bin/head /usr/bin/ls \
+  /usr/bin/convert /usr/bin/convert-im6.q16; do
+  runuser -u "${user_name}" -- env HOME="${user_home}" bash -lc \
+    "source \"${user_home}/.nvm/nvm.sh\" && source \"${env_file}\" && openclaw approvals allowlist add --agent main \"${executable}\" >/dev/null"
 done
 
 echo "OpenClaw bridge installed and enabled"
