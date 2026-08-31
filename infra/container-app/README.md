@@ -20,6 +20,32 @@ The federated identity needs `AcrPush` on `a9acr` and `Container Apps
 Contributor` on `a9badminton` or its resource group. The Container App's own
 managed identity needs `AcrPull` on the registry.
 
+### Federated identity credential (required for OIDC sign-in)
+
+If the `deploy` job fails at "Sign in to Azure with workload identity" with
+`AADSTS70025: has no configured federated identity credentials`, the App
+Registration (or user-assigned managed identity) behind `AZURE_CLIENT_ID` is
+missing the federated credential for this repo/branch. An Azure AD admin must
+add it — this cannot be fixed from the workflow file itself:
+
+```bash
+az ad app federated-credential create \
+  --id "$AZURE_CLIENT_ID" \
+  --parameters '{
+    "name": "badminton-console-main",
+    "issuer": "https://token.actions.githubusercontent.com",
+    "subject": "repo:Wiiki0807/badminton-console:ref:refs/heads/main",
+    "audiences": ["api://AzureADTokenExchange"]
+  }'
+```
+
+If the deploy job should also run for pull requests targeting `main`, add a
+second credential with subject
+`repo:Wiiki0807/badminton-console:pull_request`. For a user-assigned managed
+identity instead of an App Registration, use
+`az identity federated-credential create` with the same issuer/subject/audience
+values against the identity's resource ID.
+
 ## First image deployment
 
 The `Container App API` workflow builds every pull request. On `main`, it signs
