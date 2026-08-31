@@ -37,9 +37,15 @@ Commands:
 /home/tommywu/.openclaw/x1_camera_control.py snapshot --view left-hand
 /home/tommywu/.openclaw/x1_camera_control.py snapshot --view right-hand
 /home/tommywu/.openclaw/x1_locate_control.py status
+/home/tommywu/.openclaw/x1_locate_control.py repair
 /home/tommywu/.openclaw/x1_locate_control.py detect --view head --query "bottle"
 /home/tommywu/.openclaw/x1_locate_control.py detect --view left-hand --query "bottle,cup"
 ```
+
+For a LocateAnything/8090 health check, use `status`. If the user explicitly
+asks to restore, restart, or repair that service, use `repair`. These are the
+only permitted service-diagnostic actions; never fall back to raw `curl`, `ss`,
+`netstat`, `ps`, or arbitrary process control.
 
 For a requested photo, run `snapshot --view <requested view>`, parse its JSON, and return a short caption
 followed by exactly `MEDIA:<media path from JSON>`. Do not invent or rewrite the

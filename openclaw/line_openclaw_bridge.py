@@ -85,6 +85,10 @@ X1_LOCATE_REQUEST_RE = re.compile(
     r"(?:LocateAnything|物件偵測|(?:偵測|辨識|找出).{0,24}(?:數量|幾個|位置|座標|框|bounding))",
     re.IGNORECASE | re.DOTALL,
 )
+X1_LOCATE_SERVICE_RE = re.compile(
+    r"(?=.*(?:LocateAnything|8090|VLM))(?=.*(?:狀態|健康|連線|檢查|探測|修復|恢復|重啟|啟動|status|health|repair|restart))",
+    re.IGNORECASE | re.DOTALL,
+)
 X1_VISUAL_REACTOR_RE = re.compile(
     r"(?:視覺迎賓|視覺監聽|視覺規則|(?:偵測|看到).{0,24}(?:時|就).{0,24}(?:播放|執行|做)|"
     r"(?:停止|關閉|查詢|更新).{0,16}(?:迎賓|監聽|偵測規則))",
@@ -525,6 +529,17 @@ def _run_agent(task_id: str, text: str, callback_url: str) -> None:
                 "不得自行建立 loop、cron、systemd 或背景程序。start/update 必須明確提供 --query、"
                 "--actions、--view、--confirm-seconds、--repeat-seconds；未指定時使用 head、1.5 秒、"
                 "30 秒。停止必須呼叫 stop，查詢必須呼叫 status。\n\n"
+                f"使用者要求：{text}"
+            )
+        elif X1_LOCATE_SERVICE_RE.search(text):
+            requested_action = "repair" if re.search(
+                r"(?:修復|恢復|重啟|啟動|repair|restart|start)", text, re.IGNORECASE
+            ) else "status"
+            text = (
+                "LocateAnything 服務安全約束：只可透過 exec 直接呼叫 "
+                f"/home/tommywu/.openclaw/x1_locate_control.py {requested_action}。"
+                "不得呼叫 curl、ss、netstat、ps、schtasks 或其他程序／網路工具。"
+                "請依 wrapper JSON 清楚回報服務狀態。\n\n"
                 f"使用者要求：{text}"
             )
         elif X1_LOCATE_REQUEST_RE.search(text):

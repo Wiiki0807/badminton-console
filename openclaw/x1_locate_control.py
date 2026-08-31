@@ -21,6 +21,7 @@ BASE_URL = os.environ.get("X1_LOCATE_BASE_URL", "http://127.0.0.1:8090").rstrip(
 STATE_DIR = Path(os.environ.get("OPENCLAW_STATE_DIR", str(Path.home() / ".openclaw")))
 WORKSPACE = Path(os.environ.get("OPENCLAW_WORKSPACE_DIR", str(STATE_DIR / "workspace"))).resolve()
 CAMERA_CONTROL = STATE_DIR / "x1_camera_control.py"
+SCHTASKS = "/mnt/c/Windows/System32/schtasks.exe"
 MAX_JPEG_BYTES = 5 * 1024 * 1024
 QUERY_RE = re.compile(r"[\w\s,，\-\u3400-\u9fff]+", re.UNICODE)
 
@@ -139,14 +140,56 @@ def detect(query: str, view: str = "head", include_image: bool = True) -> dict[s
     return output
 
 
+def status() -> dict[str, Any]:
+    """Return a small, stable health response instead of exposing raw HTTP tools."""
+    result = _json_get("/json", timeout=8)
+    return {
+        "ok": not bool(result.get("error")),
+        "service": "LocateAnything",
+        "endpoint": BASE_URL,
+        "task": result.get("task"),
+        "query": result.get("query"),
+        "count": len(result.get("boxes", [])) if isinstance(result.get("boxes"), list) else 0,
+        "infer_ms": int(result.get("infer_ms", 0) or 0),
+        "error": result.get("error"),
+    }
+
+
+def repair(timeout: float = 120) -> dict[str, Any]:
+    """Start the fixed Windows service task and wait for the private endpoint."""
+    completed = subprocess.run(
+        [SCHTASKS, "/Run", "/TN", "vlmstream"],
+        check=False, capture_output=True, text=True, timeout=20,
+    )
+    if completed.returncode:
+        raise RuntimeError("LocateAnything scheduled task could not be started")
+    started = time.monotonic()
+    last_error = "service is still loading"
+    while time.monotonic() - started < timeout:
+        try:
+            result = status()
+            result["repair_started"] = True
+            result["wait_seconds"] = round(time.monotonic() - started, 1)
+            return result
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+            last_error = str(exc)
+            time.sleep(2)
+    raise RuntimeError(f"LocateAnything did not become healthy: {last_error}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("status", "detect"))
+    parser.add_argument("action", choices=("status", "detect", "repair"))
     parser.add_argument("--query", default="")
     parser.add_argument("--view", choices=("head", "left-hand", "right-hand"), default="head")
     parser.add_argument("--no-image", action="store_true")
     args = parser.parse_args()
-    result = _json_get("/json") if args.action == "status" else detect(args.query, args.view, not args.no_image)
+    if args.action == "status":
+        result = status()
+    elif args.action == "repair":
+        result = repair()
+    else:
+        result = detect(args.query, args.view, not args.no_image)
     print(json.dumps(result, ensure_ascii=False))
 
 

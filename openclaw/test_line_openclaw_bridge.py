@@ -65,6 +65,25 @@ class NewsBridgeTests(unittest.TestCase):
         )
         callback.assert_called_once()
 
+    @mock.patch("line_openclaw_bridge._callback")
+    @mock.patch("line_openclaw_bridge._openclaw")
+    def test_locate_service_health_uses_bounded_status_wrapper(self, openclaw, callback):
+        openclaw.return_value = {"result": {"text": "健康"}}
+        bridge._run_agent("health-task", "檢查 LocateAnything 8090 狀態", "https://example.test/callback")
+        arguments = openclaw.call_args.args
+        prompt = arguments[arguments.index("--message") + 1]
+        self.assertIn("x1_locate_control.py status", prompt)
+        self.assertIn("不得呼叫 curl", prompt)
+
+    @mock.patch("line_openclaw_bridge._callback")
+    @mock.patch("line_openclaw_bridge._openclaw")
+    def test_locate_service_repair_uses_bounded_repair_wrapper(self, openclaw, callback):
+        openclaw.return_value = {"result": {"text": "已恢復"}}
+        bridge._run_agent("repair-task", "修復 8090 VLM 服務", "https://example.test/callback")
+        arguments = openclaw.call_args.args
+        prompt = arguments[arguments.index("--message") + 1]
+        self.assertIn("x1_locate_control.py repair", prompt)
+
     @mock.patch("line_openclaw_bridge.subprocess.run")
     def test_x1_direct_play_uses_allowlisted_controller_and_real_mode(self, run):
         run.return_value = mock.Mock(
