@@ -95,6 +95,8 @@ install -o "${user_name}" -g "${user_name}" -m 700 \
 install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/robot_control.py" "${state_dir}/robot_control.py"
 install -o "${user_name}" -g "${user_name}" -m 700 \
+  "${source_dir}/speaker_tts_control.py" "${state_dir}/speaker_tts_control.py"
+install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/azure_callback.py" "${state_dir}/azure_callback.py"
 install -o "${user_name}" -g "${user_name}" -m 700 \
   "${source_dir}/veo_story_video.py" "${state_dir}/veo_story_video.py"
@@ -130,6 +132,14 @@ if [[ -f "${camera_skill_source}" ]]; then
     "${camera_skill_source}" \
     "${state_dir}/workspace/skills/x1-vision-camera/SKILL.md"
 fi
+speaker_skill_source="${source_dir}/workspace/skills/robot-speaker-tts/SKILL.md"
+if [[ -f "${speaker_skill_source}" ]]; then
+  install -o "${user_name}" -g "${user_name}" -m 700 -d \
+    "${state_dir}/workspace/skills/robot-speaker-tts"
+  install -o "${user_name}" -g "${user_name}" -m 600 \
+    "${speaker_skill_source}" \
+    "${state_dir}/workspace/skills/robot-speaker-tts/SKILL.md"
+fi
 veo_skill_source="${source_dir}/workspace/skills/veo-story-video"
 if [[ -f "${veo_skill_source}/SKILL.md" ]]; then
   install -o "${user_name}" -g "${user_name}" -m 700 -d \
@@ -163,7 +173,7 @@ if runuser -u "${user_name}" -- env XDG_RUNTIME_DIR=/run/user/1000 \
 fi
 
 # Keep robot control on validated wrappers; never allowlist python3.
-for wrapper in x1_camera_control.py x1_locate_control.py x1_visual_reactor_control.py veo_story_video.py; do
+for wrapper in x1_camera_control.py x1_locate_control.py x1_visual_reactor_control.py speaker_tts_control.py veo_story_video.py; do
   runuser -u "${user_name}" -- env HOME="${user_home}" bash -lc \
     "source \"${user_home}/.nvm/nvm.sh\" && source \"${env_file}\" && openclaw approvals allowlist add --agent main \"${state_dir}/${wrapper}\" >/dev/null"
 done

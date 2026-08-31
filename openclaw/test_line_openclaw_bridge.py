@@ -85,6 +85,35 @@ class NewsBridgeTests(unittest.TestCase):
         self.assertIn("x1_locate_control.py repair", prompt)
 
     @mock.patch("line_openclaw_bridge.subprocess.run")
+    def test_direct_speaker_command_uses_bounded_wrapper(self, run):
+        run.return_value = mock.Mock(
+            returncode=0,
+            stdout=json.dumps({
+                "ok": True, "accepted": True, "robot_id": "mac-mini-edge-test"
+            }),
+            stderr="",
+        )
+        result = bridge._speaker_tts_command({
+            "text": "大家好", "robot": "mac-mini-edge-test"
+        })
+        self.assertTrue(result["accepted"])
+        command = run.call_args.args[0]
+        self.assertIn("speaker_tts_control.py", command[1])
+        self.assertEqual("大家好", command[command.index("--text") + 1])
+
+    @mock.patch("line_openclaw_bridge._callback")
+    @mock.patch("line_openclaw_bridge._openclaw")
+    def test_openclaw_speaker_task_uses_tts_skill(self, openclaw, callback):
+        openclaw.return_value = {"result": {"text": "已接受"}}
+        bridge._run_agent(
+            "speaker-task", "用喇叭說 系統測試完成", "https://example.test/callback"
+        )
+        arguments = openclaw.call_args.args
+        prompt = arguments[arguments.index("--message") + 1]
+        self.assertIn("robot-speaker-tts skill", prompt)
+        self.assertIn("speaker_tts_control.py", prompt)
+
+    @mock.patch("line_openclaw_bridge.subprocess.run")
     def test_x1_direct_play_uses_allowlisted_controller_and_real_mode(self, run):
         run.return_value = mock.Mock(
             returncode=0, stdout=json.dumps({"ok": True}), stderr=""

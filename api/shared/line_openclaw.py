@@ -65,6 +65,17 @@ ROBOT_LIST_RE = re.compile(
     r"(?:列出|查看|顯示)\s*x1\s*(?:動作|手勢|pose)|(?:動作|手勢|pose)\s*x1\s*(?:列表|清單))\s*$",
     re.IGNORECASE,
 )
+SPEAKER_TTS_RE = re.compile(
+    r"^(?:小羽|rocketai)\s*(?:請\s*)?(?:(?:用|透過)?\s*(?:喇叭|speaker)\s*"
+    r"(?:說|播放|朗讀|播報)|(?:讓\s*)?(?:喇叭|speaker)\s*(?:說|播放|朗讀|播報))"
+    r"\s*[：:]?\s*(.{1,500})$",
+    re.IGNORECASE | re.DOTALL,
+)
+SPEAKER_TTS_ROBOT_RE = re.compile(
+    r"^(?:小羽|rocketai)\s*(?:請\s*)?讓\s*([A-Za-z0-9._-]{1,64})\s*(?:的)?\s*"
+    r"(?:喇叭|speaker)\s*(?:說|播放|朗讀|播報)\s*[：:]?\s*(.{1,500})$",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def configured() -> bool:
@@ -102,6 +113,20 @@ def parse_robot_command(text: str) -> dict[str, str] | None:
         return {"action": "status", "robot": "x1"}
     if ROBOT_LIST_RE.fullmatch(bounded):
         return {"action": "list", "robot": "x1"}
+    return None
+
+
+def parse_speaker_command(text: str) -> dict[str, str] | None:
+    """Parse explicit owner speech commands without treating normal chat as audio."""
+    bounded = str(text or "").strip()[:700]
+    targeted = SPEAKER_TTS_ROBOT_RE.fullmatch(bounded)
+    if targeted:
+        spoken = " ".join(targeted.group(2).split())
+        return {"robot": targeted.group(1), "text": spoken} if spoken else None
+    matched = SPEAKER_TTS_RE.fullmatch(bounded)
+    if matched:
+        spoken = " ".join(matched.group(1).split())
+        return {"robot": "", "text": spoken} if spoken else None
     return None
 
 
@@ -151,6 +176,13 @@ def robot_command(
     if preview:
         payload["preview"] = True
     return _post("/v1/robot", payload, timeout=15)
+
+
+def speaker_tts(user_id: str, text: str, *, robot: str = "") -> dict[str, Any]:
+    payload: dict[str, Any] = {"userId": user_id, "text": text}
+    if robot:
+        payload["robot"] = robot
+    return _post("/v1/speak", payload, timeout=30)
 
 
 def sync_reminder(action: str, rows: list[dict[str, Any]]) -> None:

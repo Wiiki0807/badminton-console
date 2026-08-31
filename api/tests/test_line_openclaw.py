@@ -51,6 +51,37 @@ class LineOpenClawTests(unittest.TestCase):
         self.assertIsNone(line_openclaw.parse_robot_command("小羽 謝謝"))
         self.assertIsNone(line_openclaw.parse_robot_command("播放 thanks"))
 
+    def test_speaker_tts_requires_an_explicit_speaker_command(self):
+        self.assertEqual(
+            {"robot": "", "text": "大家好，我是小羽。"},
+            line_openclaw.parse_speaker_command("小羽 用喇叭說：大家好，我是小羽。"),
+        )
+        self.assertEqual(
+            {"robot": "mac-mini-edge-test", "text": "系統測試完成"},
+            line_openclaw.parse_speaker_command(
+                "RocketAI 讓 mac-mini-edge-test 的 speaker 播放系統測試完成"
+            ),
+        )
+        self.assertIsNone(line_openclaw.parse_speaker_command("小羽你好"))
+        self.assertIsNone(line_openclaw.parse_speaker_command("請說明這個功能"))
+
+    @mock.patch("shared.line_openclaw._post")
+    def test_speaker_tts_uses_narrow_gateway_operation(self, post):
+        post.return_value = {"ok": True, "accepted": True}
+        result = line_openclaw.speaker_tts(
+            "U-owner", "測試完成", robot="mac-mini-edge-test"
+        )
+        self.assertTrue(result["accepted"])
+        post.assert_called_once_with(
+            "/v1/speak",
+            {
+                "userId": "U-owner",
+                "text": "測試完成",
+                "robot": "mac-mini-edge-test",
+            },
+            timeout=30,
+        )
+
     @mock.patch("shared.line_openclaw._post")
     def test_robot_command_uses_narrow_gateway_operation(self, post):
         post.return_value = {"ok": True}

@@ -404,6 +404,35 @@ def line_webhook(req: func.HttpRequest) -> func.HttpResponse:
                     reply_token, "已清除這個對話最近的記憶。", access_token, welcome
                 )
                 continue
+            speaker_command = (
+                line_openclaw.parse_speaker_command(incoming_text)
+                if message_type == "text" and not line_bot.is_group_source(source)
+                else None
+            )
+            if speaker_command:
+                user_id = str(source.get("userId", ""))
+                if not inference_hub.is_line_owner(user_id):
+                    text = "這個 speaker 播放功能只允許已設定的主人使用。"
+                else:
+                    try:
+                        result = line_openclaw.speaker_tts(
+                            user_id,
+                            speaker_command["text"],
+                            robot=speaker_command.get("robot", ""),
+                        )
+                        target = str(result.get("robot_id") or "在線 speaker")
+                        text = (
+                            f"🔊 已將文字送到 {target} 播放。"
+                            if result.get("accepted")
+                            else "speaker 目前無法接受播放。"
+                        )
+                    except PermissionError:
+                        text = "這個 speaker 播放功能只允許已配對的主人使用。"
+                    except Exception:
+                        logging.exception("LINE speaker TTS command failed")
+                        text = "speaker 目前無法連線，請稍後再試。"
+                _reply_with_welcome(reply_token, text, access_token, welcome)
+                continue
             robot_command = (
                 line_openclaw.parse_robot_command(incoming_text)
                 if message_type == "text" and not line_bot.is_group_source(source)
