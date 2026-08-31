@@ -43,6 +43,7 @@ WORKSPACE_DIR = Path(
 X1_GESTURE_CONTROL = STATE_DIR / "x1_gesture_control.py"
 X1_CAMERA_CONTROL = STATE_DIR / "x1_camera_control.py"
 X1_LOCATE_CONTROL = STATE_DIR / "x1_locate_control.py"
+SPEAKER_TTS_CONTROL = STATE_DIR / "speaker_tts_control.py"
 SAFE_X1_GESTURES = {
     "away", "away2", "good", "happy", "hello", "come", "bad", "thanks",
     "goodbye", "nice", "surprised", "wave-happily", "open-two-arms",
@@ -92,6 +93,11 @@ X1_LOCATE_SERVICE_RE = re.compile(
 X1_VISUAL_REACTOR_RE = re.compile(
     r"(?:視覺迎賓|視覺監聽|視覺規則|(?:偵測|看到).{0,24}(?:時|就).{0,24}(?:播放|執行|做)|"
     r"(?:停止|關閉|查詢|更新).{0,16}(?:迎賓|監聽|偵測規則))",
+    re.IGNORECASE | re.DOTALL,
+)
+SPEAKER_TTS_RE = re.compile(
+    r"(?:用|透過|從)?\s*(?:喇叭|speaker).{0,16}(?:說|播放|朗讀|播報)|"
+    r"(?:說|播放|朗讀|播報).{0,16}(?:到|用|透過)?\s*(?:喇叭|speaker)",
     re.IGNORECASE | re.DOTALL,
 )
 VIDEO_RENDER_RE = re.compile(
@@ -223,6 +229,33 @@ def _x1_robot_command(body: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("X1 controller returned an invalid response")
     if completed.returncode or not value.get("ok"):
         raise RuntimeError(str(value.get("error") or "X1 command failed"))
+    return value
+
+
+def _speaker_tts_command(body: dict[str, Any]) -> dict[str, Any]:
+    """Queue bounded text for an online Robot Voice Hub speaker."""
+    text = " ".join(str(body.get("text", "")).split())
+    robot = str(body.get("robot", "")).strip()
+    if not 1 <= len(text) <= 500:
+        raise ValueError("speech text must contain 1-500 characters")
+    if robot and not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", robot):
+        raise ValueError("invalid robot id")
+    command = [
+        "/usr/bin/python3", str(SPEAKER_TTS_CONTROL), "speak", "--text", text,
+    ]
+    if robot:
+        command.extend(["--robot", robot])
+    completed = subprocess.run(
+        command, check=False, capture_output=True, text=True, timeout=25,
+        env=os.environ.copy(),
+    )
+    try:
+        value = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("speaker controller returned invalid JSON") from exc
+    if completed.returncode or not isinstance(value, dict) or not value.get("ok"):
+        detail = value.get("error") if isinstance(value, dict) else "speaker command failed"
+        raise RuntimeError(str(detail))
     return value
 
 
@@ -515,7 +548,16 @@ def _run_agent(task_id: str, text: str, callback_url: str) -> None:
             })
             return
         market_chart_requested = bool(MARKET_CHART_RE.search(text))
-        if re.search(r"Robot Voice Hub.{0,20}(?:狀態|在線|線上)", text, re.IGNORECASE):
+        if SPEAKER_TTS_RE.search(text):
+            text = (
+                "Robot speaker TTS 安全約束：必須使用 robot-speaker-tts skill，且只可透過 exec "
+                "直接呼叫 /home/tommywu/.openclaw/speaker_tts_control.py。"
+                "從使用者要求抽取要播放的原文作為 --text，不得擴寫或改寫；若未指定 robot，"
+                "且只有一台 speaker 在線，省略 --robot。不得呼叫 TTS endpoint、aplay、ffplay "
+                "或其他播放器。\n\n"
+                f"使用者要求：{text}"
+            )
+        elif re.search(r"Robot Voice Hub.{0,20}(?:狀態|在線|線上)", text, re.IGNORECASE):
             text = (
                 "安全約束：只可呼叫 exec，且 command 必須完全是 "
                 "'/home/tommywu/.openclaw/robot_control.py status'；"
@@ -726,6 +768,13 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(403, {"error": "owner only"})
                     return
                 self._json(200, _x1_robot_command(body))
+                return
+            if self.path == "/v1/speak":
+                user_id = str(body.get("userId", ""))
+                if not _owner_id() or not hmac.compare_digest(user_id, _owner_id()):
+                    self._json(403, {"error": "owner only"})
+                    return
+                self._json(202, _speaker_tts_command(body))
                 return
             if self.path == "/v1/admin/robot":
                 # Private loopback entry for the Inference Hub Control UI. The
