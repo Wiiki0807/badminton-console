@@ -1021,6 +1021,17 @@ def line_inference_smoke(req: func.HttpRequest) -> func.HttpResponse:
     if not inference_hub.configured():
         return json_response({"error": "Inference Hub is not configured"}, 503)
 
+    try:
+        smoke_body = req.get_json()
+    except (ValueError, TypeError):
+        smoke_body = {}
+    if isinstance(smoke_body, dict) and smoke_body.get("transportOnly") is True:
+        diagnostics = inference_hub.transport_health()
+        return json_response(
+            {"ok": bool(diagnostics.get("ok")), "diagnostics": diagnostics},
+            200 if diagnostics.get("ok") else 502,
+        )
+
     reply = inference_hub.generate_reply("請只回答 AZURE_HUB_OK", {})
     if not reply:
         return json_response({

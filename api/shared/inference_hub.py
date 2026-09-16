@@ -367,6 +367,30 @@ def connection_diagnostics() -> dict[str, Any]:
         return {"stage": "transport", "error": type(exc).__name__, "detail": str(exc)[:300]}
 
 
+def transport_health() -> dict[str, Any]:
+    """Probe Azure -> Funnel without invoking an inference model."""
+    base_url = _setting("INFERENCE_HUB_URL").rstrip("/")
+    if not base_url:
+        return {"ok": False, "stage": "configuration", "error": "not configured"}
+    req = request.Request(f"{base_url}/healthz", method="GET")
+    try:
+        with request.urlopen(req, timeout=min(_timeout(), 10.0)) as response:
+            body = json.loads(response.read(4096).decode("utf-8"))
+        healthy = int(response.status) == 200 and body.get("status") == "ok"
+        return {"ok": healthy, "stage": "health", "status": int(response.status)}
+    except error.HTTPError as exc:
+        return {"ok": False, "stage": "health", "status": int(exc.code)}
+    except error.URLError as exc:
+        return {
+            "ok": False,
+            "stage": "transport",
+            "error": type(exc.reason).__name__,
+            "detail": str(exc.reason)[:300],
+        }
+    except (TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
+        return {"ok": False, "stage": "transport", "error": type(exc).__name__, "detail": str(exc)[:300]}
+
+
 def select_chat_model(
     text: str,
     *,
