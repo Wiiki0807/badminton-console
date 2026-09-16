@@ -1023,7 +1023,10 @@ def line_inference_smoke(req: func.HttpRequest) -> func.HttpResponse:
 
     reply = inference_hub.generate_reply("請只回答 AZURE_HUB_OK", {})
     if not reply:
-        return json_response({"error": "Inference Hub request failed"}, 502)
+        return json_response({
+            "error": "Inference Hub request failed",
+            "diagnostics": inference_hub.connection_diagnostics(),
+        }, 502)
     return json_response({"ok": True, "reply": reply})
 
 

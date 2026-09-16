@@ -331,6 +331,42 @@ def configured() -> bool:
     return bool(_setting("INFERENCE_HUB_URL") and _setting("INFERENCE_HUB_TOKEN"))
 
 
+def connection_diagnostics() -> dict[str, Any]:
+    """Return a secret-free diagnostic for the authenticated smoke endpoint."""
+    base_url = _setting("INFERENCE_HUB_URL").rstrip("/")
+    token = _setting("INFERENCE_HUB_TOKEN")
+    if not base_url or not token:
+        return {"stage": "configuration", "error": "not configured"}
+    payload = json.dumps(
+        {
+            "model": select_chat_model("請只回答 AZURE_HUB_OK"),
+            "messages": [{"role": "user", "content": "請只回答 AZURE_HUB_OK"}],
+            "tool_names": [],
+            "stream": False,
+            "temperature": 0,
+            "max_tokens": 32,
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    req = request.Request(
+        f"{base_url}/chat/completions",
+        data=payload,
+        method="POST",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+    try:
+        with request.urlopen(req, timeout=_timeout()) as response:
+            body = response.read(4096).decode("utf-8", errors="replace")
+        return {"stage": "chat", "status": int(response.status), "body": body[:500]}
+    except error.HTTPError as exc:
+        body = exc.read(4096).decode("utf-8", errors="replace")
+        return {"stage": "chat", "status": int(exc.code), "error": body[:500]}
+    except error.URLError as exc:
+        return {"stage": "transport", "error": type(exc.reason).__name__, "detail": str(exc.reason)[:300]}
+    except (TimeoutError, OSError) as exc:
+        return {"stage": "transport", "error": type(exc).__name__, "detail": str(exc)[:300]}
+
+
 def select_chat_model(
     text: str,
     *,
